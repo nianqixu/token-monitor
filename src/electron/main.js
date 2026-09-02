@@ -89,6 +89,7 @@ const { customPricingPath } = require('../shared/tokscaleConfig');
 const { applyCustomPricing, normalizeCustomPricingSetting } = require('../shared/tokscaleCustomPricing');
 const { createHub } = require('../hub/server');
 const { probeHubBuild } = require('./hubBuildStatus');
+const { createTraeCollection } = require('./traeCollection');
 const { claudeWebCookie, deepseekToken, fetchClaudeLimits, normalizeClaudeWebCookieInput, normalizeLimitsRefreshMode, normalizeLimitsRefreshMs, parseBoolean, parseLimitProviders, runCodexLogin, minimaxToken, copilotToken, zaiToken, zaiRegion, zaiTeamToken, volcengineCredentials, qoderCookie, traeAccessToken, traeDeviceId, commandcodeCookie, kimiToken, kimiWebToken, ollamaSessionCookie, zedCookie } = require('../shared/limitCollector');
 const { fetchOllamaLimits, rememberOllamaValidation } = require('../shared/ollamaLimits');
 const { copilotLoginErrorMessage, isAllowedVerificationUrl, runCopilotDeviceFlowLogin } = require('../shared/copilotDeviceFlow');
@@ -600,6 +601,10 @@ function defaultSettings() {
     traeAccessToken: '',
     traeDeviceId: '',
     zedCookie: '',
+    traeCollectionEnabled: true,
+    traeDbKey: '',
+    traeWorkCollectionEnabled: true,
+    traeWorkDbKey: '',
     commandcodeCookie: '',
     kimiApiKey: '',
     kimiWebAccessToken: '',
@@ -863,6 +868,13 @@ function normalizeTraeAccessToken(value) {
 
 function normalizeTraeDeviceId(value) {
   return traeDeviceId({}, { traeDeviceId: String(value || '') });
+}
+
+// The SQLCipher key extracted from the running Trae CN process is a 32-byte
+// hex string; anything else is discarded rather than stored.
+function normalizeTraeDbKey(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(raw) ? raw : '';
 }
 
 function currentTraeAccessToken() {
@@ -2648,6 +2660,62 @@ function summaryWithArchivedClientUsage(summary) {
   return summaryWithArchivesApplied(summary, updateSessionUsageArchive(summary, now), now);
 }
 
+// Render transform for every collector summary: the Trae CN and TraeWork local
+// snapshots go in first (their sessions feed the project rollups below), then
+// the archives. The pre-merge summary is retained so a lane collect can republish
+// fresh totals without waiting out the collector's own tick cadence.
+function traeTransformUsage(summary, reason, meta) {
+  if (meta?.preview !== true) {
+    try { lastCollectorSummary = JSON.parse(JSON.stringify(summary)); } catch (_) { lastCollectorSummary = null; }
+  }
+  let withTrae = summary;
+  if (traeCollectionLane) withTrae = traeCollectionLane.applyToSummary(withTrae, meta);
+  if (traeWorkCollectionLane) withTrae = traeWorkCollectionLane.applyToSummary(withTrae, meta);
+  return summaryWithArchivedClientUsage(withTrae);
+}
+
+// A lane just landed a fresh snapshot. The collector's full tick can take tens
+// of seconds on a busy machine, which left the dashboard totals a minute stale
+// even though the lane panels (fed directly by the lane) were seconds fresh.
+// Re-merge the lanes onto the last collector summary and push that — the same
+// additive merge every tick performs, just on demand. The merged record goes
+// through the same aggregateDevices pipeline as onRecord: the renderer reads
+// the aggregated stats shape (periods), never the raw device record.
+function pushLaneRefreshedStats() {
+  if (!lastCollectorSummary) return;
+  try {
+    const record = traeTransformUsage(JSON.parse(JSON.stringify(lastCollectorSummary)), 'lane', { preview: false });
+    if (!record || typeof record !== 'object') return;
+    const localDevice = { ...record, receivedAt: new Date().toISOString() };
+    const localStats = withHistoryPreview(aggregateDevices([localDevice], 0), [localDevice]);
+    attachLocalNativeViews(localStats, localDevice);
+    sendPush({ event: 'stats', data: { type: 'stats', reason: 'local', stats: localStats, at: new Date().toISOString() } });
+  } catch (error) {
+    console.log(`[trae-collection] lane stats refresh failed: ${error.message}`);
+  }
+}
+
+async function persistTraeSettingsPatch(patch) {
+  if (patch?.traeDbKey !== undefined) settings.traeDbKey = normalizeTraeDbKey(patch.traeDbKey);
+  if (patch?.traeWorkDbKey !== undefined) settings.traeWorkDbKey = normalizeTraeDbKey(patch.traeWorkDbKey);
+  saveSettings({ throwOnError: true });
+  pushSettingsToRenderer();
+}
+
+function pushTraeStatusToRenderer(status) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.webContents.send('trae:status', status); } catch (_) {}
+  }
+  pushLaneRefreshedStats();
+}
+
+function pushTraeWorkStatusToRenderer(status) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.webContents.send('traeWork:status', status); } catch (_) {}
+  }
+  pushLaneRefreshedStats();
+}
+
 function applyMacActivationPolicy(state = {}) {
   if (process.platform !== 'darwin') return;
   const mainWindowVisible = state.mainWindowVisible !== undefined
@@ -2808,6 +2876,11 @@ let sseRetryTimer = null;
 let streamConnected = false;
 let streamFailure = null;
 let lastCollectedDevice = null;
+let traeCollectionLane = null;
+let traeWorkCollectionLane = null;
+// The most recent pre-merge collector summary (kept by traeTransformUsage) so a
+// lane collect can republish totals without waiting for the next collector tick.
+let lastCollectorSummary = null;
 let latestHubStats = null;
 let latestHubStatsReceivedAt = null;
 let latestHubStatsSource = 'none';
@@ -3746,7 +3819,7 @@ function startSyncCollector() {
     envelope: electronDeviceEnvelope(),
     initialLimits: lastCollectedDevice?.limits,
     limitsOptions: electronLimitsConfig(),
-    transformUsage: summaryWithArchivedClientUsage,
+    transformUsage: traeTransformUsage,
     usageOptions,
     sink,
     onDiagnosticEvent: recordDiagnosticEvent,
@@ -3794,7 +3867,7 @@ function startHostCollector() {
     envelope: electronDeviceEnvelope(),
     initialLimits: lastCollectedDevice?.limits,
     limitsOptions: electronLimitsConfig(),
-    transformUsage: summaryWithArchivedClientUsage,
+    transformUsage: traeTransformUsage,
     usageOptions,
     sink,
     onDiagnosticEvent: recordDiagnosticEvent,
@@ -4324,7 +4397,7 @@ function startLocalCollector() {
     envelope: electronDeviceEnvelope(),
     initialLimits: lastCollectedDevice?.limits,
     limitsOptions: electronLimitsConfig(),
-    transformUsage: summaryWithArchivedClientUsage,
+    transformUsage: traeTransformUsage,
     usageOptions,
     progressive: true,
     onRecord: (summary, meta) => {
@@ -4443,6 +4516,10 @@ function showPopover() {
   mainWindow.setBounds(target);
   suppressNextBlurHide = true;
   mainWindow.show();
+  // The full tick cadence can be tens of seconds on a busy machine; revealing
+  // the popover is exactly when the user looks at the totals, so ask for a
+  // cheap anchored today scan right away instead of waiting out that cadence.
+  try { void deviceRuntimeHandle?.tick('popover-reveal', { todayOnly: true }); } catch (_) {}
   // The focus event itself may not fire a blur; the suppress flag covers the
   // case where macOS fires blur immediately after show because the click that
   // opened us still has the menu bar as the focused element.
@@ -4768,6 +4845,8 @@ function settingsForRenderer() {
     traeAccessToken: settings?.traeAccessToken ? 'set' : '',
     traeDeviceId: settings?.traeDeviceId ? 'set' : '',
     zedCookie: settings?.zedCookie ? 'set' : '',
+    traeDbKey: settings?.traeDbKey ? 'set' : '',
+    traeWorkDbKey: settings?.traeWorkDbKey ? 'set' : '',
     commandcodeCookie: settings?.commandcodeCookie ? 'set' : '',
     ollamaCookie: settings?.ollamaCookie ? 'set' : '',
     // Never ship OpenCode session cookies to the renderer; the UI only needs to
@@ -6425,6 +6504,29 @@ function rebuildWindow() {
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON_PATH);
   ensureSettingsLoaded();
+  traeCollectionLane = createTraeCollection({
+    getSettings: () => settings,
+    updateSettings: persistTraeSettingsPatch,
+    pushStatus: pushTraeStatusToRenderer,
+    // Timestamped: the collect log is the only record of when the watch fired
+    // versus when the data landed, which is exactly what "usage updated late"
+    // reports have to be judged against.
+    log: (message) => console.log(new Date().toISOString(), message),
+    userDataPath: app.getPath('userData'),
+    // The collector's watch never covers the Trae directory, so a landed Trae
+    // snapshot would otherwise wait out the shared collection interval before
+    // any tick merged it into the totals the dashboard shows.
+    nudgeCollector: () => deviceRuntimeHandle?.tick('trae', { todayOnly: true })
+  });
+  traeWorkCollectionLane = createTraeCollection({
+    source: 'traework',
+    getSettings: () => settings,
+    updateSettings: persistTraeSettingsPatch,
+    pushStatus: pushTraeWorkStatusToRenderer,
+    log: (message) => console.log(new Date().toISOString(), message),
+    userDataPath: app.getPath('userData'),
+    nudgeCollector: () => deviceRuntimeHandle?.tick('traework', { todayOnly: true })
+  });
   // Switching the OS between light and dark repaints the taskbar underneath an
   // icon we have already handed to the shell, so the renderer has to recompose
   // it — nothing else in the app would notice the change.
@@ -6474,6 +6576,8 @@ app.whenReady().then(() => {
       macWidgetSnapshotController?.resume();
     }
   });
+  traeCollectionLane.start();
+  traeWorkCollectionLane.start();
   void hydrateCodexManagedWorkspaceLabels();
   if (settings.discordRpcEnabled) startDiscordRpc();
   rateCache = readRateCache();
@@ -6482,6 +6586,53 @@ app.whenReady().then(() => {
   rateRefreshTimer = setInterval(() => { refreshExchangeRates(); }, 6 * 60 * 60 * 1000);
   setTimeout(() => { checkTokscaleNpm({ silent: true }); }, 2000);
   ipcMain.handle('settings:get', () => settingsForRenderer());
+
+  ipcMain.handle('trae:getStatus', () => traeCollectionLane?.status() || null);
+  ipcMain.handle('trae:extractKey', async () => {
+    try {
+      return await traeCollectionLane?.extractAndSaveKey() || { ok: false, error: 'trae collection unavailable' };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('trae:collectNow', async () => {
+    try {
+      return await traeCollectionLane?.collectNow('manual') || null;
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  // Reveal the Trae CN database in Explorer. The path is resolved here, never
+  // accepted from the renderer — the same rule as usage:revealClientSource.
+  ipcMain.handle('trae:revealSource', () => {
+    const dbPath = traeCollectionLane?.status()?.dbPath || '';
+    if (!dbPath || !fs.existsSync(dbPath)) return false;
+    shell.showItemInFolder(dbPath);
+    return true;
+  });
+
+  ipcMain.handle('traeWork:getStatus', () => traeWorkCollectionLane?.status() || null);
+  ipcMain.handle('traeWork:extractKey', async () => {
+    try {
+      return await traeWorkCollectionLane?.extractAndSaveKey() || { ok: false, error: 'traework collection unavailable' };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  ipcMain.handle('traeWork:collectNow', async () => {
+    try {
+      return await traeWorkCollectionLane?.collectNow('manual') || null;
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+  // Same reveal rule as trae:revealSource above.
+  ipcMain.handle('traeWork:revealSource', () => {
+    const dbPath = traeWorkCollectionLane?.status()?.dbPath || '';
+    if (!dbPath || !fs.existsSync(dbPath)) return false;
+    shell.showItemInFolder(dbPath);
+    return true;
+  });
 
   ipcMain.handle('subscriptions:adoptOrphans', async () => {
     try {
@@ -6599,6 +6750,8 @@ app.whenReady().then(() => {
     if (patch.traeAccessToken !== undefined) normalizedPatch.traeAccessToken = normalizeTraeAccessToken(patch.traeAccessToken);
     if (patch.traeDeviceId !== undefined) normalizedPatch.traeDeviceId = normalizeTraeDeviceId(patch.traeDeviceId);
     if (patch.zedCookie !== undefined) normalizedPatch.zedCookie = normalizeZedCookie(patch.zedCookie);
+    if (patch.traeDbKey !== undefined) normalizedPatch.traeDbKey = normalizeTraeDbKey(patch.traeDbKey);
+    if (patch.traeWorkDbKey !== undefined) normalizedPatch.traeWorkDbKey = normalizeTraeDbKey(patch.traeWorkDbKey);
     if (patch.commandcodeCookie !== undefined) normalizedPatch.commandcodeCookie = normalizeCommandcodeCookie(patch.commandcodeCookie);
     if (patch.kimiApiKey !== undefined) normalizedPatch.kimiApiKey = normalizeKimiApiKey(patch.kimiApiKey);
     if (patch.kimiWebAccessToken !== undefined) normalizedPatch.kimiWebAccessToken = normalizeKimiWebAccessToken(patch.kimiWebAccessToken);
@@ -6674,6 +6827,8 @@ app.whenReady().then(() => {
       historyIntervalMs: normalizeHistoryIntervalMs(patch.historyIntervalMs ?? settings.historyIntervalMs),
       sessionUsageArchiveEnabled: parseBoolean(patch.sessionUsageArchiveEnabled ?? settings.sessionUsageArchiveEnabled, true),
       wslScanEnabled: parseBoolean(patch.wslScanEnabled ?? settings.wslScanEnabled, true),
+      traeCollectionEnabled: parseBoolean(patch.traeCollectionEnabled ?? settings.traeCollectionEnabled, true),
+      traeWorkCollectionEnabled: parseBoolean(patch.traeWorkCollectionEnabled ?? settings.traeWorkCollectionEnabled, true),
       collectionMode: normalizeCollectionMode(patch.collectionMode ?? settings.collectionMode),
       collectionIntervalMs: normalizeCollectionIntervalMs(patch.collectionIntervalMs ?? settings.collectionIntervalMs),
       syncUploadIntervalMs: normalizeSyncUploadIntervalMs(patch.syncUploadIntervalMs ?? settings.syncUploadIntervalMs),
@@ -6732,6 +6887,8 @@ app.whenReady().then(() => {
       traeAccessToken: patch.traeAccessToken !== undefined ? normalizeTraeAccessToken(patch.traeAccessToken) : (settings.traeAccessToken || ''),
       traeDeviceId: patch.traeDeviceId !== undefined ? normalizeTraeDeviceId(patch.traeDeviceId) : (settings.traeDeviceId || ''),
       zedCookie: patch.zedCookie !== undefined ? normalizeZedCookie(patch.zedCookie) : (settings.zedCookie || ''),
+      traeDbKey: patch.traeDbKey !== undefined ? normalizeTraeDbKey(patch.traeDbKey) : (settings.traeDbKey || ''),
+      traeWorkDbKey: patch.traeWorkDbKey !== undefined ? normalizeTraeDbKey(patch.traeWorkDbKey) : (settings.traeWorkDbKey || ''),
       commandcodeCookie: patch.commandcodeCookie !== undefined ? normalizeCommandcodeCookie(patch.commandcodeCookie) : (settings.commandcodeCookie || ''),
       ollamaCookie: patch.ollamaCookie !== undefined ? normalizeOllamaCookie(patch.ollamaCookie) : (settings.ollamaCookie || ''),
       customModelPricing: patch.customModelPricing !== undefined
@@ -6751,6 +6908,18 @@ app.whenReady().then(() => {
     if (JSON.stringify(settings.customModelPricing || []) !== previousCustomModelPricing) {
       regenerateTokscalePricing();
       refreshAfterPricingChange();
+    }
+    if (previousRuntimeSettings.traeCollectionEnabled !== settings.traeCollectionEnabled
+      || previousRuntimeSettings.traeDbKey !== settings.traeDbKey
+      || previousRuntimeSettings.collectionMode !== settings.collectionMode
+      || previousRuntimeSettings.collectionIntervalMs !== settings.collectionIntervalMs) {
+      traeCollectionLane?.onSettingsChanged();
+    }
+    if (previousRuntimeSettings.traeWorkCollectionEnabled !== settings.traeWorkCollectionEnabled
+      || previousRuntimeSettings.traeWorkDbKey !== settings.traeWorkDbKey
+      || previousRuntimeSettings.collectionMode !== settings.collectionMode
+      || previousRuntimeSettings.collectionIntervalMs !== settings.collectionIntervalMs) {
+      traeWorkCollectionLane?.onSettingsChanged();
     }
     configureWindowToggleShortcut();
     if (settings.startAtLogin !== previousStartAtLogin) {
@@ -7052,7 +7221,16 @@ app.whenReady().then(() => {
   // pair when the tool is not tracked, avoiding eager filesystem work.
   const clientSourceIpcHandlers = createClientSourceIpcHandlers({
     knownClients: KNOWN_CLIENTS,
-    trackedClients: () => trackedClientSet(clientsCsvForSetting(settings?.clients)),
+    trackedClients: () => {
+      const tracked = trackedClientSet(clientsCsvForSetting(settings?.clients));
+      // Trae CN and TraeWork collect through their own lanes rather than this
+      // collector, so they never join the clients CSV — their settings rows
+      // still need the standard rescan guards to see them as tracked while
+      // their lanes are on.
+      if (settings?.traeCollectionEnabled !== false) tracked.add('trae');
+      if (settings?.traeWorkCollectionEnabled !== false) tracked.add('traework');
+      return tracked;
+    },
     visibleDiagnosticRoots,
     clientDiagnosticRoots,
     showItemInFolder: (target) => shell.showItemInFolder(target),
@@ -7064,7 +7242,15 @@ app.whenReady().then(() => {
       return true;
     },
     canRunRescan: () => ownsUsageRuntime(),
-    rescanClient: (client) => refreshUsageClient(client, { forceSync: true }),
+    rescanClient: (client) => {
+      if (client === 'trae') {
+        return Promise.resolve(traeCollectionLane?.collectNow('manual')).then((status) => Boolean(status));
+      }
+      if (client === 'traework') {
+        return Promise.resolve(traeWorkCollectionLane?.collectNow('manual')).then((status) => Boolean(status));
+      }
+      return refreshUsageClient(client, { forceSync: true });
+    },
     repairClientSyncLock: () => repairAntigravitySyncLock({
       lockPath: antigravitySyncLockPath(os.homedir())
     }),
