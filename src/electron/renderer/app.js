@@ -11775,12 +11775,12 @@ async function onToolTrackingToggle() {
   // would hand an unknown id to the collector and tokscale.
   const laneToggles = rendered.filter(([client]) => isCollectionLaneClient(client));
   const checked = settingsListFilterApi.mergeRenderedSelection(
-    new Set([...enabledClientSet()].filter((id) => !isCollectionLaneClient(id))),
+    enabledClientSet(),
     rendered.filter(([client]) => !isCollectionLaneClient(client)),
     clientDisplayPreferencesApi
       .orderedClients(KNOWN_CLIENTS, state.settings?.clientDisplayOrder, state.settings?.pinnedClients)
       .map(({ id }) => id)
-  );
+  ).filter((id) => !isCollectionLaneClient(id));
   const patch = { clients: checked.join(',') };
   for (const [client, on] of laneToggles) {
     patch[collectionLaneClient(client).enabledSetting] = on;
