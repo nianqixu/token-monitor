@@ -626,7 +626,6 @@ body.is-windows.floating-bubble-collapsed-right .floating-bubble-tab {
 .settings-wsl-block { display: grid; gap: 6px; min-width: 0; }
 .wsl-panel { display: grid; gap: 4px; margin-top: 4px; }
 .settings-trae-block { display: grid; gap: 6px; min-width: 0; }
-.settings-trae-block.hidden { display: none; }
 .trae-panel { display: grid; gap: 4px; margin-top: 4px; }
 .trae-panel-header, .trae-panel-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .trae-panel-actions { display: flex; gap: 8px; padding-left: 10px; }
