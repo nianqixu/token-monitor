@@ -2686,6 +2686,11 @@ function pushLaneRefreshedStats() {
   try {
     const record = traeTransformUsage(JSON.parse(JSON.stringify(lastCollectorSummary)), 'lane', { preview: false });
     if (!record || typeof record !== 'object') return;
+    // The lane push re-presents the last raw collector summary, which has no
+    // limits part. Skipping the deviceState composition would publish an empty
+    // limits list and blank every quota card until the next real push, so carry
+    // the last composed limits over instead.
+    if (lastCollectedDevice?.limits) record.limits = lastCollectedDevice.limits;
     const localDevice = { ...record, receivedAt: new Date().toISOString() };
     const localStats = withHistoryPreview(aggregateDevices([localDevice], 0), [localDevice]);
     attachLocalNativeViews(localStats, localDevice);
