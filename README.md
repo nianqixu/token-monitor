@@ -67,7 +67,7 @@ Token Monitor supports token usage, account-limit checks, and session details se
 | <img src=".github/assets/tools-icon/ollama.png" width="28" alt="Ollama" /> | Ollama | Ollama Cloud cookie (session/weekly usage via ollama.com/settings) | — | ✅ | — |
 | <img src=".github/assets/tools-icon/trae.png" width="28" alt="Trae CN" /> | Trae CN | Local SQLCipher database (opt-in, Windows only; key read from the running Trae CN process) + Trae CN access token (Trae CN / SOLO credits via trae.cn) | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/traework.png" width="28" alt="TraeWork" /> | TraeWork | Local SQLCipher database (opt-in, Windows only; key read from the running TRAE SOLO CN process; local desktop tasks) | ✅ | — | — |
-| <img src=".github/assets/tools-icon/thirdparty.png" width="28" alt="Third-party APIs" /> | Third-party APIs | New API / Sub2API-compatible account presets (including compatible One API forks), a New API API-key preset, and a Custom balance endpoint | — | ✅ | — |
+| <img src=".github/assets/tools-icon/thirdparty.gif" width="28" alt="Third-party APIs" /> | Third-party APIs | New API / Sub2API-compatible account presets (including compatible One API forks), a New API API-key preset, and a Custom balance endpoint | — | ✅ | — |
 
 <details>
 <summary><strong>Notes, Custom balance endpoints, and data paths overridden by environment variables</strong></summary>

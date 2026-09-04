@@ -67,7 +67,7 @@ Token Monitor は **トークン使用量**、**アカウント制限**、**セ�
 | <img src=".github/assets/tools-icon/ollama.png" width="28" alt="Ollama" /> | Ollama | Ollama Cloud cookie（ollama.com/settings で session/weekly 使用量を取得） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/trae.png" width="28" alt="Trae CN" /> | Trae CN | ローカル SQLCipher DB（オプトイン、Windows のみ；キーは実行中の Trae CN プロセスから取得）+ Trae CN access token（trae.cn で Trae CN／SOLO credits を取得） | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/traework.png" width="28" alt="TraeWork" /> | TraeWork | ローカル SQLCipher DB（オプトイン、Windows のみ；キーは実行中の TRAE SOLO CN プロセスから取得；ローカルデスクトップタスクのみ） | ✅ | — | — |
-| <img src=".github/assets/tools-icon/thirdparty.png" width="28" alt="サードパーティAPI" /> | サードパーティAPI | New API / Sub2API互換アカウントプリセット（互換性のあるOne APIフォークを含む）、New APIキープリセット、カスタム残高エンドポイント | — | ✅ | — |
+| <img src=".github/assets/tools-icon/thirdparty.gif" width="28" alt="サードパーティAPI" /> | サードパーティAPI | New API / Sub2API互換アカウントプリセット（互換性のあるOne APIフォークを含む）、New APIキープリセット、カスタム残高エンドポイント | — | ✅ | — |
 
 <details>
 <summary><strong>注意事項、Custom 残高エンドポイント、環境変数で変更したデータパス</strong></summary>

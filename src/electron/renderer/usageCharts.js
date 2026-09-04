@@ -383,7 +383,7 @@
     if (/gemini|gemma|google/.test(name)) return 'gemini';
     if (/grok|xai/.test(name)) return 'xai';
     if (/deepseek/.test(name)) return 'deepseek';
-    if (/llama|meta/.test(name)) return 'meta';
+    if (/llama|meta|muse-spark(?:-|$)/.test(name)) return 'meta';
     if (/mistral|mixtral|codestral/.test(name)) return 'mistral';
     if (/qwen|qwq|qvq/.test(name)) return 'qwen';
     if (/kimi|moonshot|k2d6-agent|k3-agent/.test(name)) return 'kimi';

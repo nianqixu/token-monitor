@@ -67,7 +67,7 @@ Token Monitor 對 Token 用量、帳戶額度與 session 明細分別支援：
 | <img src=".github/assets/tools-icon/ollama.png" width="28" alt="Ollama" /> | Ollama | Ollama Cloud cookie（透過 ollama.com/settings 查詢 session／每週用量） | — | ✅ | — |
 | <img src=".github/assets/tools-icon/trae.png" width="28" alt="Trae CN" /> | Trae CN | 本地 SQLCipher 資料庫（可選、僅 Windows；金鑰自執行中的 Trae CN 處理序讀取）+ Trae CN access token（透過 trae.cn 查詢 Trae CN／SOLO credits） | ✅ | ✅ | — |
 | <img src=".github/assets/tools-icon/traework.png" width="28" alt="TraeWork" /> | TraeWork | 本地 SQLCipher 資料庫（可選、僅 Windows；金鑰自執行中的 TRAE SOLO CN 處理序讀取；僅本地桌面任務） | ✅ | — | — |
-| <img src=".github/assets/tools-icon/thirdparty.png" width="28" alt="第三方 API" /> | 第三方 API | New API / Sub2API 相容帳戶預設方案（包括相容的 One API 分支）、New API 金鑰預設方案與自訂餘額端點 | — | ✅ | — |
+| <img src=".github/assets/tools-icon/thirdparty.gif" width="28" alt="第三方 API" /> | 第三方 API | New API / Sub2API 相容帳戶預設方案（包括相容的 One API 分支）、New API 金鑰預設方案與自訂餘額端點 | — | ✅ | — |
 
 <details>
 <summary><strong>注意事項、Custom 餘額端點，以及用環境變數覆寫的資料路徑</strong></summary>

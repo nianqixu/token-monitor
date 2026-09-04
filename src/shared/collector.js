@@ -18,7 +18,7 @@ const {
 } = require('./clientHealth');
 const { tokscalePackageNameForPlatform, tokscalePlatformKey } = require('./tokscalePlatform');
 const { createTokscaleCapabilityResolver, filterSupportedClients, parseSupportedClients } = require('./tokscaleCapabilities');
-const { customPricingPath, tokscaleCacheDirs, tokscaleConfigDir } = require('./tokscaleConfig');
+const { customPricingPath, tokscaleCacheDirs, tokscaleConfigDir, tokscaleHomeDir } = require('./tokscaleConfig');
 const {
   applyPeriodDelta,
   emptyPeriod,
@@ -2336,8 +2336,19 @@ function clientSourceRoots(clientsCsv, options = {}) {
   const xdgHome = xdgDataHome(home);
   add('opencode', ['opencode-data', path.join(xdgHome, 'opencode')]);
   add('openclaw', ['openclaw-agents', path.join(home, '.openclaw', 'agents')]);
+  // Tokscale resolves these two caches differently and the split is deliberate
+  // upstream, so mirror it rather than picking whichever looks tidier:
+  //   cursor.rs      — `home_dir().join(".config/tokscale/cursor-cache")`, a
+  //                    home-relative literal that never consults
+  //                    `get_config_dir()`. On Windows that is
+  //                    `%USERPROFILE%\.config\tokscale\`, not `%APPDATA%\tokscale\`,
+  //                    and TOKSCALE_CONFIG_DIR does not move it.
+  //   antigravity.rs — `paths::get_config_dir().join("antigravity-cache")`,
+  //                    routed that way on purpose so an isolated profile covers
+  //                    the sync cache too.
   const tokscaleConfigRoot = tokscaleConfigDir({ env, platform, homeDir: home });
-  add('cursor', ['tokscale-cursor-cache', path.join(tokscaleConfigRoot, 'cursor-cache')]);
+  const tokscaleHome = tokscaleHomeDir({ env, platform, homeDir: home });
+  add('cursor', ['tokscale-cursor-cache', path.join(tokscaleHome, '.config', 'tokscale', 'cursor-cache')]);
   add('antigravity', ['tokscale-antigravity-cache', path.join(tokscaleConfigRoot, 'antigravity-cache')]);
   // A whitespace-only KIMI_CODE_HOME counts as unset, matching tokscale: it
   // joins `sessions` onto the raw value, so a blank export would resolve to the

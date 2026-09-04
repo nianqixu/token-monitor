@@ -55,7 +55,7 @@ test('third-party settings separate presets, scope, and safe custom mappings', (
   assert.match(app, /const refreshTokenKey = 'settings\.thirdparty\.refreshToken'/);
   assert.match(app, /settings\.thirdparty\.sub2ApiAccessTokenPlaceholder/);
   assert.match(app, /settings\.thirdparty\.sub2ApiRefreshTokenPlaceholder/);
-  assert.match(styles, /#thirdpartyRefreshTokenRow\.hidden,/);
+  assert.match(html, /id="thirdpartyRefreshTokenRow" class="thirdparty-field hidden"/);
   assert.match(app, /const refreshToken = String\(refreshTokenInput\?\.value \|\| ''\)\.trim\(\)/);
   assert.match(app, /thirdPartyProfileErrorText\(result, adapter\)/);
   assert.match(app, /thirdpartyCustomConfig[\s\S]*?classList\.toggle\('hidden', !customMode\)/);
@@ -326,7 +326,7 @@ test('third-party fallback stays last after named providers across product surfa
   for (const file of ['README.md', 'README.zh-TW.md', 'README.zh-CN.md', 'README.ja.md', 'README.ko.md']) {
     const content = read(file);
     assert.ok(
-      content.indexOf('tools-icon/thirdparty.png') > content.indexOf('tools-icon/ollama.png'),
+      content.indexOf('tools-icon/thirdparty.gif') > content.indexOf('tools-icon/ollama.png'),
       file
     );
   }
@@ -335,7 +335,7 @@ test('third-party fallback stays last after named providers across product surfa
 test('third-party adapters share one documentation icon and preserve compatibility guidance', () => {
   for (const file of ['README.md', 'README.zh-TW.md', 'README.zh-CN.md', 'README.ja.md', 'README.ko.md']) {
     const content = read(file);
-    assert.match(content, /\.github\/assets\/tools-icon\/thirdparty\.png"/, file);
+    assert.match(content, /\.github\/assets\/tools-icon\/thirdparty\.gif"/, file);
     assert.doesNotMatch(content, /\.github\/assets\/tools-icon\/newapi\.png"/, file);
     assert.match(content, /Third-party APIs|第三方 API|サードパーティAPI|서드파티 API/, file);
     assert.match(content, /New API \/ Sub2API/, file);
@@ -347,7 +347,7 @@ test('third-party adapters share one documentation icon and preserve compatibili
   assert.match(env, /TOKEN_MONITOR_NEWAPI_ACCESS_TOKEN=/);
   assert.match(env, /TOKEN_MONITOR_NEWAPI_USER_ID=/);
   assert.match(env, /TOKEN_MONITOR_NEWAPI_API_KEY=/);
-  assert.equal(fs.existsSync(path.join(root, '.github/assets/tools-icon/thirdparty.png')), true);
+  assert.equal(fs.existsSync(path.join(root, '.github/assets/tools-icon/thirdparty.gif')), true);
   assert.equal(fs.existsSync(path.join(root, '.github/assets/tools-icon/newapi.png')), false);
   assert.equal(fs.existsSync(path.join(root, 'assets/icons/newapi.svg')), true);
 });

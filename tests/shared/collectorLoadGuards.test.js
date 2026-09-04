@@ -1326,15 +1326,22 @@ test('watchPathsForClients watches only Proma data that is currently parsed', ()
   }
 });
 
+// Cursor's cache is a home-relative literal upstream and Antigravity's follows
+// TOKSCALE_CONFIG_DIR, so the two are seeded from different roots on purpose:
+// pointing the override at the Cursor dir must not be what makes Cursor detect.
 test('clientDataDirPresence still detects cursor/antigravity via their cache dirs', () => {
-  const tmp = withTmpHome([]);
+  const tmp = withTmpHome([path.join('.config', 'tokscale', 'cursor-cache')]);
   const configDir = path.join(tmp, 'tokscale-config');
-  fs.mkdirSync(path.join(configDir, 'cursor-cache'), { recursive: true });
   fs.mkdirSync(path.join(configDir, 'antigravity-cache'), { recursive: true });
   const originalHomedir = os.homedir;
   const previousConfigDir = process.env.TOKSCALE_CONFIG_DIR;
+  // The Windows runner exports an absolute HOME, which tokscale's home_dir()
+  // prefers over the profile — point it at the fixture too, or the Cursor probe
+  // would look outside the temp home on that leg only.
+  const previousHome = process.env.HOME;
   os.homedir = () => tmp;
   process.env.TOKSCALE_CONFIG_DIR = configDir;
+  process.env.HOME = tmp;
   try {
     const { clientDataDirPresence } = freshCollector();
     const presence = clientDataDirPresence('cursor,antigravity');
@@ -1344,6 +1351,8 @@ test('clientDataDirPresence still detects cursor/antigravity via their cache dir
     os.homedir = originalHomedir;
     if (previousConfigDir === undefined) delete process.env.TOKSCALE_CONFIG_DIR;
     else process.env.TOKSCALE_CONFIG_DIR = previousConfigDir;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     delete require.cache[collectorPath];
     fs.rmSync(tmp, { recursive: true, force: true });
   }
