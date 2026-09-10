@@ -86,11 +86,24 @@ const collectionLaneClient = (clientId) => COLLECTION_LANE_CLIENTS[clientId] || 
 // (history_v2 carries no cache fields), so wherever the unclassified tokens
 // provably come from a lane client the breakdown row says "sub-agent" instead
 // of the generic "unclassified".
-function unclassifiedRowLabel(clientKey, period) {
+function unclassifiedRowLabel(clientKey, period, modelKey) {
   if (clientKey) {
     return isCollectionLaneClient(clientKey)
       ? t('dashboard.tooltip.traeSubagent')
       : t('dashboard.tooltip.unclassified');
+  }
+  if (modelKey && period) {
+    // Cross-client model row: the per-client unclassified map is not reliably
+    // transported on every stats push, so attribute by users instead — when
+    // every client that used this model is a Trae lane client, the
+    // unclassified input can only be Trae sub-agent tokens.
+    const users = Object.entries(period?.clientModels || {})
+      .filter(([, models]) => Number(models?.[modelKey]) > 0)
+      .map(([client]) => client);
+    if (users.length > 0 && users.every((client) => isCollectionLaneClient(client))) {
+      return t('dashboard.tooltip.traeSubagent');
+    }
+    return t('dashboard.tooltip.unclassified');
   }
   const holders = Object.entries(period?.clientUnclassifiedTokens || {})
     .filter(([, tokens]) => (Number(tokens) || 0) > 0)
@@ -2526,7 +2539,7 @@ function modelRowsForPeriod(period, rankingMetric = state.settings?.modelRanking
     cacheWriteTokens: attributionComponent(period, 'modelCacheWrites', model),
     outputTokens: attributionComponent(period, 'modelOutputs', model),
     unclassifiedTokens: attributionComponent(period, 'modelUnclassifiedTokens', model),
-    unclassifiedLabel: unclassifiedRowLabel(null, period)
+    unclassifiedLabel: unclassifiedRowLabel(null, period, model)
   }));
   if (modelRows.length > 0) {
     return usageAttributionRowsApi.rankRowsWithValues(modelRows, rankingMetric);
