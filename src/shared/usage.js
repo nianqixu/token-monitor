@@ -1,14 +1,14 @@
 'use strict';
 
 const PERIODS = ['today', 'month', 'allTime'];
-const { aggregateLimits, normalizeLimitsSummary } = require('./limits');
+const { aggregateLimits, normalizeLimitsSummary } = require('./limits/core');
 const { normalizeClientHealth } = require('./clientHealth');
 const {
   coerceHistory, dayKeyAddDays, hasDisjointReasoning, localDayKey, mergeHistories,
   normalizeTokscaleClientName
 } = require('./history');
-const { REASONIX_CLIENT } = require('./reasonixPaths');
-const { filterReasonixSyntheticSessions, isReasonixSyntheticSession } = require('./reasonixSessionGuard');
+const { REASONIX_CLIENT } = require('./providers/reasonix/paths');
+const { filterReasonixSyntheticSessions, isReasonixSyntheticSession } = require('./providers/reasonix/sessionGuard');
 const { canonicalProjectKey, deterministicProjectLabel } = require('./projectKey');
 const { normalizeSyncUploadIntervalMs, staleAfterMsForSyncUpload } = require('./syncUploadInterval');
 const TOKEN_KEYS = ['totalTokens', 'total_tokens', 'totalTokenCount', 'total_token_count', 'tokens', 'tokenCount', 'token_count'];
@@ -121,7 +121,7 @@ function normalizeIsoTimestamp(value) {
 
 function emptyPeriod() {
   return {
-    capabilities: { tokenComponents: true },
+    capabilities: { tokenComponents: true, throughput: true },
     totalTokens: 0,
     costUsd: 0,
     cacheReadTokens: 0,
@@ -200,7 +200,7 @@ function normalizeClientNameUncached(raw) {
   if (raw.includes('copilot')) return 'copilot';
   if (/\bpi\b/.test(raw)) return 'pi';
   if (raw.includes('zed')) return 'zed';
-  if (raw.includes('kilocode')) return 'kilocode';
+  if (/^kilo[\s_-]*code$/.test(raw)) return 'kilo';
   if (/command[\s_-]*code/.test(raw)) return 'commandcode';
   if (raw.includes('micode')) return 'micode';
   if (raw.includes('zcode')) return 'zcode';
@@ -212,6 +212,7 @@ function normalizeClientNameUncached(raw) {
   if (raw.includes('reasonix')) return 'reasonix';
   if (/cherry[\s_-]*studio/.test(raw)) return 'cherrystudio';
   if (/lm[\s_-]*studio/.test(raw)) return 'lmstudio';
+  if (/^unsloth(?:[\s_-]+(?:studio|api))?$/.test(raw)) return 'unsloth';
   if (raw.includes('dsh')) return 'dsh';
   if (raw.includes('opencode')) return 'opencode';
   if (raw.includes('openclaw') || raw.includes('clawd') || raw.includes('moltbot') || raw.includes('moldbot')) return 'openclaw';
@@ -573,7 +574,13 @@ function normalizeSession(input, fallbackKey) {
 
 function normalizePeriod(input, options = {}) {
   const period = emptyPeriod();
-  if (!input || typeof input !== 'object') return period;
+  if (!input || typeof input !== 'object') {
+    // `emptyPeriod()` is also the exact neutral value used by current producers and
+    // merge targets, so it is throughput-capable by construction. Missing wire input
+    // is different: its zero counters are synthetic and must never seed a live delta.
+    period.capabilities.throughput = false;
+    return period;
+  }
   const projectsEnabled = options.projectsEnabled !== false;
   period.totalTokens = Math.max(0, Math.round(asNumber(input.totalTokens ?? input.total_tokens ?? 0)));
   const componentCapability = input.capabilities?.tokenComponents;
@@ -607,6 +614,16 @@ function normalizePeriod(input, options = {}) {
       ?? (period.capabilities.tokenComponents ? 0 : period.totalTokens - knownComponentTokens)
     )))
   );
+  const throughputCapability = input.capabilities?.throughput;
+  const hasThroughputShape = [
+    ['timedTokens', 'timed_tokens'],
+    ['timedOutputTokens', 'timed_output_tokens'],
+    ['timedDurationMs', 'timed_duration_ms']
+  ].every((keys) => keys.some((key) => hasOwn(input, key)));
+  // Older producers did not carry these counters. Preserve that provenance instead of
+  // turning their normalized zero defaults into a baseline for a later all-day delta.
+  period.capabilities.throughput = throughputCapability === true
+    || (throughputCapability !== false && hasThroughputShape);
   period.timedTokens = Math.max(0, Math.round(asNumber(input.timedTokens ?? input.timed_tokens ?? 0)));
   // Capped at outputTokens because the gate makes that a physical bound: output is counted
   // whole or not at all, so a period cannot have timed more output than it produced. The
@@ -814,6 +831,7 @@ function fallbackUsagePeriod(json) {
   // across cache read/write and output. Preserve that distinction through the
   // hub instead of letting normalizePeriod's zero defaults imply a cache miss.
   period.capabilities.tokenComponents = period.totalTokens === 0;
+  period.capabilities.throughput = period.totalTokens === 0;
   period.unclassifiedTokens = period.totalTokens;
   return period;
 }
@@ -1281,6 +1299,8 @@ function aggregateHistory(devices, options = {}) {
 function addPeriodInto(target, source) {
   target.capabilities.tokenComponents = target.capabilities.tokenComponents === true
     && source.capabilities?.tokenComponents === true;
+  target.capabilities.throughput = target.capabilities.throughput === true
+    && source.capabilities?.throughput === true;
   target.totalTokens += source.totalTokens;
   target.costUsd += source.costUsd;
   target.cacheReadTokens += source.cacheReadTokens;
@@ -1471,6 +1491,12 @@ function deltaValue(base, fresh, anchor, key) {
     // provenance is not arithmetically subtractable, so retain exactness only
     // while both the durable base and the fresh replacement prove it.
     return base === true && fresh === true;
+  }
+  if (key === 'throughput') {
+    // Throughput drives a live delta, so the value being subtracted must also
+    // prove its provenance. Otherwise an unavailable anchor's zero defaults
+    // make the whole fresh Today snapshot look like one new delta.
+    return base === true && fresh === true && anchor === true;
   }
   if (key === 'startedAt') {
     const baseMs = timestampMs(base);

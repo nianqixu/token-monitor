@@ -40,6 +40,7 @@
     commandcode: { web: 'Web' },
     kimi: { api: 'API', web: 'Web' },
     ollama: { web: 'Web' },
+    alibaba: { web: 'Web' },
     thirdparty: { api: 'API' }
   };
 
@@ -64,7 +65,7 @@
     copilot: ['Manual login', 'API'],
     zed: ['Manual login', 'Web'],
     kiro: ['Auto', 'CLI'],
-    zai: ['Coding Plan', 'API key'],
+    zai: ['Auto', 'Coding Plan', 'API key'],
     zaiteam: ['Team Plan', 'API key'],
     volcengine: ['Coding/Agent Plan', 'API key'],
     qoder: ['Manual login', 'Web'],
@@ -73,6 +74,7 @@
     commandcode: ['Manual login', 'Web'],
     kimi: ['Coding Plan', 'Web/API'],
     ollama: ['Manual login', 'Web'],
+    alibaba: ['Token Plan', 'Web'],
     thirdparty: ['Relay', 'API']
   };
 
@@ -131,6 +133,14 @@
 
   function limitProviderPlanDisplayLabel(providerOrId, value) {
     const label = limitProviderDisplayLabel(value);
+    if (providerId(providerOrId) === 'zai') {
+      // Subscription names arrive as "GLM Coding Lite/Pro/Max" (ZCode's own
+      // formatPlanName concatenates exactly this). The provider heading
+      // already supplies "GLM", so only the tier remains. Z.ai-prefixed
+      // names and the ZCode plan names pass through untouched — the prefix
+      // is only stripped when it repeats the heading.
+      return label.replace(/^GLM\s+Coding\s+/iu, '').trim() || label;
+    }
     if (providerId(providerOrId) !== 'zed') return label;
     // Zed's API returns canonical names such as "Zed Student" and "Zed Pro".
     // The provider heading already supplies "Zed", so keep only the meaningful
@@ -225,6 +235,9 @@
   }
 
   function limitProviderCompactWindowLabel(providerOrId, window, visibleWindows = []) {
+    if (providerId(providerOrId) === 'zai' && normalizeId(window?.kind) === 'daily') {
+      return String(window?.label || '').trim();
+    }
     if (providerId(providerOrId) !== 'antigravity') return '';
     const labels = (visibleWindows || []).map((candidate) => antigravityQuotaWindow(candidate)?.groupLabel || '');
     const currentLabel = antigravityQuotaWindow(window)?.groupLabel || '';
@@ -308,7 +321,7 @@
     if (status === 'notConfigured') {
       if (providerName === 'kimi') return { label: 'Add credential', tone: 'setup' };
       if (providerName === 'antigravity') return { label: 'Not set up', tone: 'setup' };
-      if (providerName === 'cursor' || providerName === 'copilot' || providerName === 'zed' || providerName === 'qoder' || providerName === 'trae' || providerName === 'workbuddy' || providerName === 'commandcode' || providerName === 'ollama') return { label: 'Sign in', tone: 'setup' };
+      if (providerName === 'cursor' || providerName === 'copilot' || providerName === 'zed' || providerName === 'qoder' || providerName === 'trae' || providerName === 'workbuddy' || providerName === 'commandcode' || providerName === 'ollama' || providerName === 'alibaba') return { label: 'Sign in', tone: 'setup' };
       if (providerName === 'thirdparty') return { label: 'Add credential', tone: 'setup' };
       if (providerName === 'openrouter' || providerName === 'deepseek' || providerName === 'minimax' || providerName === 'zai' || providerName === 'zaiteam' || providerName === 'volcengine' || providerName === 'kimi') return { label: 'Add API key', tone: 'setup' };
       if (providerName === 'grok') return { label: 'Run grok login', tone: 'setup' };

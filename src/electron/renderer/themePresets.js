@@ -62,8 +62,8 @@
   // synthetic "default" fallback is shown last.
   const VENDOR_ORDER = [
     'claude', 'codex', 'hermes', 'opencode', 'openrouter', 'openclaw', 'cline', 'cursor',
-    'gemini', 'antigravity', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilocode', 'commandcode', 'micode', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'proma', 'qodercn', 'qoder', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio', 'deepseek', 'xai', 'meta', 'mistral',
-    'moonshot', 'zai', 'zaiteam', 'cohere', 'xiaomi', 'minimax', 'doubao', 'hunyuan', 'volcengine', 'ollama', 'trae', 'traework', 'thirdparty'
+    'gemini', 'antigravity', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilo', 'commandcode', 'micode', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'proma', 'qodercn', 'qoder', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio', 'unsloth', 'deepseek', 'xai', 'meta', 'mistral',
+    'moonshot', 'zai', 'zaiteam', 'cohere', 'xiaomi', 'minimax', 'doubao', 'hunyuan', 'volcengine', 'ollama', 'trae', 'traework', 'alibaba', 'thirdparty'
   ];
 
   // Display labels for every vendor in the clientColors map. The widget also
@@ -85,7 +85,7 @@
     copilot: 'GitHub Copilot',
     pi: 'Pi',
     zed: 'Zed',
-    kilocode: 'Kilo Code',
+    kilo: 'Kilo',
     commandcode: 'Command Code',
     micode: 'MiMo Code',
     zcode: 'ZCode',
@@ -98,6 +98,7 @@
     dsh: 'DeepSeek Harness',
     cherrystudio: 'Cherry Studio',
     lmstudio: 'LM Studio',
+    unsloth: 'Unsloth',
     deepseek: 'DeepSeek',
     xai: 'xAI',
     meta: 'Meta',
@@ -116,6 +117,7 @@
     trae: 'Trae CN',
     traework: 'Trae Work CN',
     ollama: 'Ollama',
+    alibaba: 'Alibaba Cloud',
     thirdparty: 'Third-party APIs',
     default: 'Default'
   };

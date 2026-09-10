@@ -359,19 +359,23 @@ body.is-windows.floating-bubble-collapsed-right .floating-bubble-tab {
   width: 148px;
   height: 30px;
 }
+/* Cover the whole top-right rounded corner without covering the period tabs:
+   the top arm occupies the 12px shell padding and the right arm continues down
+   through the 14px side padding. The parent's rounded clip supplies the arc. */
 .actions-hotspot {
   position: absolute;
-  top: -14px;
-  right: -12px;
+  top: -12px;
+  right: -14px;
   width: 28px;
-  height: 22px;
+  height: 28px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 100%, 50% 42.857%, 0 42.857%);
   z-index: 5;
 }
 .window-actions {
   position: absolute;
   top: 0;
   right: 0;
-  width: 154px;
+  width: 114px;
   height: 30px;
   display: flex;
   justify-content: flex-end;
@@ -379,7 +383,7 @@ body.is-windows.floating-bubble-collapsed-right .floating-bubble-tab {
   opacity: 0;
   pointer-events: none;
   transform: translateY(-2px);
-  transition: opacity 160ms ease 280ms, transform 160ms ease 280ms;
+  transition: opacity 160ms ease 140ms, transform 160ms ease 140ms;
   z-index: 4;
 }
 #footerActionSlot { display: contents; }
@@ -456,7 +460,7 @@ body.is-windows.floating-bubble-collapsed-right .floating-bubble-tab {
   position: absolute;
   inset: 0;
   width: 100%;
-  transition: opacity 160ms ease 280ms, transform 160ms ease 280ms;
+  transition: opacity 160ms ease 140ms, transform 160ms ease 140ms;
 }
 .title-controls:has(.actions-hotspot:hover) .tabs, .title-controls:has(.window-actions:hover) .tabs, .title-controls:has(.window-actions:focus-within) .tabs, .shell.settings-open .title-controls .tabs {
   opacity: 0;
@@ -3487,7 +3491,7 @@ html.is-windows .settings-panel select option {
 .row-icon-copilot    { -webkit-mask-image: url(../../../assets/icons/copilot.svg);       mask-image: url(../../../assets/icons/copilot.svg); }
 .row-icon-pi         { -webkit-mask-image: url(../../../assets/icons/pi.svg);            mask-image: url(../../../assets/icons/pi.svg); }
 .row-icon-zed        { -webkit-mask-image: url(../../../assets/icons/zed.svg);           mask-image: url(../../../assets/icons/zed.svg); }
-.row-icon-kilocode   { -webkit-mask-image: url(../../../assets/icons/kilocode.svg);      mask-image: url(../../../assets/icons/kilocode.svg); }
+.row-icon-kilo       { -webkit-mask-image: url(../../../assets/icons/kilo.svg);          mask-image: url(../../../assets/icons/kilo.svg); }
 .row-icon-commandcode { -webkit-mask-image: url(../../../assets/icons/commandcode.svg);   mask-image: url(../../../assets/icons/commandcode.svg); }
 .row-icon-micode     { -webkit-mask-image: url(../../../assets/icons/xiaomi.svg);       mask-image: url(../../../assets/icons/xiaomi.svg); }
 .row-icon-zcode      { -webkit-mask-image: url(../../../assets/icons/zai.svg);          mask-image: url(../../../assets/icons/zai.svg); }
@@ -3499,6 +3503,7 @@ html.is-windows .settings-panel select option {
 .row-icon-dsh        { -webkit-mask-image: url(../../../assets/icons/dsh.svg);            mask-image: url(../../../assets/icons/dsh.svg); }
 .row-icon-cherrystudio { -webkit-mask-image: url(../../../assets/icons/cherrystudio.svg); mask-image: url(../../../assets/icons/cherrystudio.svg); }
 .row-icon-lmstudio  { -webkit-mask-image: url(../../../assets/icons/lmstudio.svg);      mask-image: url(../../../assets/icons/lmstudio.svg); }
+.row-icon-unsloth   { -webkit-mask-image: url(../../../assets/icons/unsloth.svg);       mask-image: url(../../../assets/icons/unsloth.svg); }
 .row-icon-opencode   { -webkit-mask-image: url(../../../assets/icons/opencode.svg);      mask-image: url(../../../assets/icons/opencode.svg); }
 .row-icon-openrouter { -webkit-mask-image: url(../../../assets/icons/openrouter.svg);    mask-image: url(../../../assets/icons/openrouter.svg); }
 .row-icon-openclaw   { -webkit-mask-image: url(../../../assets/icons/openclaw.svg);      mask-image: url(../../../assets/icons/openclaw.svg); }
@@ -3517,6 +3522,7 @@ html.is-windows .settings-panel select option {
 .row-icon-minimax    { -webkit-mask-image: url(../../../assets/icons/minimax.svg);       mask-image: url(../../../assets/icons/minimax.svg); }
 .row-icon-doubao     { -webkit-mask-image: url(../../../assets/icons/doubao.svg);        mask-image: url(../../../assets/icons/doubao.svg); }
 .row-icon-volcengine     { -webkit-mask-image: url(../../../assets/icons/volcengine.svg);        mask-image: url(../../../assets/icons/volcengine.svg); }
+.row-icon-alibaba    { -webkit-mask-image: url(../../../assets/icons/alibaba.svg);       mask-image: url(../../../assets/icons/alibaba.svg); }
 .row-icon-qoder      { -webkit-mask-image: url(../../../assets/icons/qoder.svg);         mask-image: url(../../../assets/icons/qoder.svg); }
 .row-icon-trae       { -webkit-mask-image: url(../../../assets/icons/trae.svg);          mask-image: url(../../../assets/icons/trae.svg); }
 .row-icon-traework   { -webkit-mask-image: url(../../../assets/icons/traework.svg);      mask-image: url(../../../assets/icons/traework.svg); }
@@ -3529,6 +3535,9 @@ html.is-windows .settings-panel select option {
 .row-icon-os-apple   { -webkit-mask-image: url(../../../assets/icons/os-apple.svg);      mask-image: url(../../../assets/icons/os-apple.svg); }
 .row-icon-os-linux   { -webkit-mask-image: url(../../../assets/icons/os-linux.svg);      mask-image: url(../../../assets/icons/os-linux.svg); }
 .row-icon-os-windows { -webkit-mask-image: url(../../../assets/icons/os-windows.svg);    mask-image: url(../../../assets/icons/os-windows.svg); }
+/* The Limits list mark. Sizing only: the mask itself comes from the shared
+   .row-icon-<id> table below, which every id in limitMarksWithIcon already has
+   a rule in. */
 .limit-icon {
   display: inline-block;
   flex: 0 0 auto;
@@ -3542,106 +3551,13 @@ html.is-windows .settings-panel select option {
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
 }
-.limit-icon-claude {
-  -webkit-mask-image: url(../../../assets/icons/claude.svg);
-  mask-image: url(../../../assets/icons/claude.svg);
-}
-.limit-icon-codex {
-  -webkit-mask-image: url(../../../assets/icons/codex.svg);
-  mask-image: url(../../../assets/icons/codex.svg);
-}
-.limit-icon-cursor {
-  -webkit-mask-image: url(../../../assets/icons/cursor.svg);
-  mask-image: url(../../../assets/icons/cursor.svg);
-}
-.limit-icon-antigravity {
-  -webkit-mask-image: url(../../../assets/icons/antigravity.svg);
-  mask-image: url(../../../assets/icons/antigravity.svg);
-}
-.limit-icon-opencode {
-  -webkit-mask-image: url(../../../assets/icons/opencode.svg);
-  mask-image: url(../../../assets/icons/opencode.svg);
-}
-.limit-icon-openrouter {
-  -webkit-mask-image: url(../../../assets/icons/openrouter.svg);
-  mask-image: url(../../../assets/icons/openrouter.svg);
-}
-.limit-icon-deepseek {
-  -webkit-mask-image: url(../../../assets/icons/deepseek.svg);
-  mask-image: url(../../../assets/icons/deepseek.svg);
-}
-.limit-icon-grok {
+/* Grok is the one mark that differs between the two sizes: the tracked client
+   reuses the vendor mask (.row-icon-grok is xai.svg) while the limits provider
+   has its own. Everything else shares the .row-icon-<id> mask that
+   renderLimitProviderMark now asks for, so there is one mask table, not two. */
+.limit-icon.row-icon-grok {
   -webkit-mask-image: url(../../../assets/icons/grok.svg);
   mask-image: url(../../../assets/icons/grok.svg);
-}
-.limit-icon-minimax {
-  -webkit-mask-image: url(../../../assets/icons/minimax.svg);
-  mask-image: url(../../../assets/icons/minimax.svg);
-}
-.limit-icon-copilot {
-  -webkit-mask-image: url(../../../assets/icons/copilot.svg);
-  mask-image: url(../../../assets/icons/copilot.svg);
-}
-.limit-icon-zed {
-  -webkit-mask-image: url(../../../assets/icons/zed.svg);
-  mask-image: url(../../../assets/icons/zed.svg);
-}
-.limit-icon-kiro {
-  -webkit-mask-image: url(../../../assets/icons/kiro.svg);
-  mask-image: url(../../../assets/icons/kiro.svg);
-}
-.limit-icon-commandcode {
-  -webkit-mask-image: url(../../../assets/icons/commandcode.svg);
-  mask-image: url(../../../assets/icons/commandcode.svg);
-}
-.limit-icon-zai {
-  -webkit-mask-image: url(../../../assets/icons/zai.svg);
-  mask-image: url(../../../assets/icons/zai.svg);
-}
-.limit-icon-zaiteam {
-  -webkit-mask-image: url(../../../assets/icons/zai.svg);
-  mask-image: url(../../../assets/icons/zai.svg);
-}
-.limit-icon-volcengine {
-  -webkit-mask-image: url(../../../assets/icons/volcengine.svg);
-  mask-image: url(../../../assets/icons/volcengine.svg);
-}
-.limit-icon-qoder {
-  -webkit-mask-image: url(../../../assets/icons/qoder.svg);
-  mask-image: url(../../../assets/icons/qoder.svg);
-}
-.limit-icon-trae {
-  -webkit-mask-image: url(../../../assets/icons/trae.svg);
-  mask-image: url(../../../assets/icons/trae.svg);
-}
-.limit-icon-workbuddy {
-  -webkit-mask-image: url(../../../assets/icons/workbuddy.svg);
-  mask-image: url(../../../assets/icons/workbuddy.svg);
-}
-
-.limit-icon-ollama {
-  -webkit-mask-image: url(../../../assets/icons/ollama.svg);
-  mask-image: url(../../../assets/icons/ollama.svg);
-}
-.limit-icon-kimi {
-  -webkit-mask-image: url(../../../assets/icons/kimi.svg);
-  mask-image: url(../../../assets/icons/kimi.svg);
-}
-.limit-icon-mimo {
-  -webkit-mask-image: url(../../../assets/icons/xiaomi.svg);
-  mask-image: url(../../../assets/icons/xiaomi.svg);
-}
-.limit-icon-thirdparty {
-  -webkit-mask-image: url(../../../assets/icons/thirdparty.svg);
-  mask-image: url(../../../assets/icons/thirdparty.svg);
-}
-.limit-icon-newapi {
-  -webkit-mask-image: url(../../../assets/icons/newapi.svg);
-  mask-image: url(../../../assets/icons/newapi.svg);
-}
-.limit-icon-sub2api {
-  -webkit-mask-image: url(../../../assets/icons/sub2api.svg);
-  mask-image: url(../../../assets/icons/sub2api.svg);
 }
 .row-label {
   display: grid;
@@ -4272,12 +4188,21 @@ html.is-windows .limit-live-badge {
   background: rgba(var(--sunken-rgb), 0.44);
 }
 .limit-meter-fill {
+  position: relative;
   width: 100%;
   height: 100%;
   border-radius: 3px;
   transform: scaleX(var(--bar-scale, 0));
   transform-origin: left center;
   transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.limit-meter-completion {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.58);
+  opacity: 0;
+  will-change: opacity;
 }
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-reduce-motion="off"]) .bar-fill,
@@ -4864,6 +4789,7 @@ html.is-windows .limit-live-badge {
 }
 .limit-row.stale .limit-name, .limit-row.stale .limit-window-text span:last-child { color: var(--muted); }
 .footer {
+  --view-switcher-max-width: min(150px, 52%);
   position: relative;
   z-index: 1;
   display: flex;
@@ -4913,11 +4839,77 @@ html.is-windows .limit-live-badge {
   outline: 2px solid rgba(var(--accent-rgb), 0.32);
   outline-offset: -2px;
 }
+.live-token-rate {
+  position: absolute;
+  left: 50%;
+  display: inline-flex;
+  height: 30px;
+  max-width: 116px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transition: color 140ms ease, background-color 140ms ease, opacity 180ms ease;
+}
+.live-token-rate:hover {
+  background: rgba(var(--overlay-rgb), 0.055);
+  color: var(--text);
+}
+.live-token-rate:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.32);
+  outline-offset: 1px;
+}
+.live-token-rate-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  background: var(--accent);
+  -webkit-mask: url("icons/actions/zap.svg") center / contain no-repeat;
+  mask: url("icons/actions/zap.svg") center / contain no-repeat;
+}
+.live-token-rate-value {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.live-token-rate.is-idle { opacity: 0.52; }
+.live-token-rate.is-fresh .live-token-rate-icon {
+  animation: live-token-rate-flash 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes live-token-rate-flash {
+  0% { filter: drop-shadow(0 0 0 rgba(var(--accent-rgb), 0)); transform: scale(0.86); }
+  42% { filter: drop-shadow(0 0 5px rgba(var(--accent-rgb), 0.68)); transform: scale(1.13); }
+  100% { filter: drop-shadow(0 0 0 rgba(var(--accent-rgb), 0)); transform: scale(1); }
+}
+.footer.live-token-rate-enabled {
+  --view-switcher-max-width: min(112px, max(0px, calc(50% - 66px)));
+}
+.footer.live-token-rate-obscured .live-token-rate,
+.footer:has(.utility-actions:hover) .live-token-rate,
+.footer:has(.utility-actions :focus-visible) .live-token-rate,
+.footer:has(.refresh-button:is(.is-refreshing, .is-refreshed, .is-refresh-error)) .live-token-rate,
+.shell.settings-open .footer .live-token-rate {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
 .view-switcher {
   position: relative;
   display: flex;
   min-width: 0;
-  max-width: min(150px, 52%);
+  max-width: var(--view-switcher-max-width);
   flex: 0 1 auto;
   align-items: center;
   margin-right: auto;
@@ -5099,6 +5091,12 @@ html.is-windows .limit-live-badge {
   :root:not([data-reduce-motion="off"]) .view-switcher-menu {
     filter: none;
     transition-duration: 0.01ms;
+  }
+  :root:not([data-reduce-motion="off"]) .live-token-rate {
+    transition: none;
+  }
+  :root:not([data-reduce-motion="off"]) .live-token-rate-icon {
+    animation: none;
   }
 }
 .view-icon-home { -webkit-mask-image: url("icons/views/home.svg"); mask-image: url("icons/views/home.svg"); }
@@ -5345,7 +5343,8 @@ html.is-windows .limit-live-badge {
 #commandcodeManualPanel > .accordion-animation-inner,
 #ollamaManualPanel > .accordion-animation-inner,
 #mimoManualPanel > .accordion-animation-inner,
-#kimiManualPanel > .accordion-animation-inner {
+#kimiManualPanel > .accordion-animation-inner,
+#alibabaManualPanel > .accordion-animation-inner {
   display: grid;
   min-width: 0;
   gap: 8px;
@@ -5383,6 +5382,8 @@ html.is-windows .limit-live-badge {
 #mimoManualPanel textarea,
 #kimiManualPanel input,
 #kimiManualPanel textarea,
+#alibabaManualPanel textarea,
+#alibabaManualPanel select,
 #copilotManualDetails input {
   width: 100%;
   font-size: 12px;

@@ -1,6 +1,12 @@
 'use strict';
 
-const clientLabels = { claude: 'Claude Code', codex: 'Codex', hermes: 'Hermes Agent', gemini: 'Gemini', cursor: 'Cursor', opencode: 'OpenCode', openclaw: 'OpenClaw', antigravity: 'Antigravity', cline: 'Cline', kimi: 'Kimi', qwen: 'Qwen', grok: 'Grok Build', copilot: 'GitHub Copilot', pi: 'Pi', zed: 'Zed', kilocode: 'Kilo Code', commandcode: 'Command Code', micode: 'MiMo Code', zcode: 'ZCode', kiro: 'Kiro', codebuddy: 'CodeBuddy', workbuddy: 'WorkBuddy', proma: 'Proma', qodercn: 'Qoder CN', reasonix: 'Reasonix', dsh: 'DeepSeek Harness', cherrystudio: 'Cherry Studio', lmstudio: 'LM Studio', trae: 'Trae CN', traework: 'Trae Work CN'};
+// Client identity — ids, labels and display order — comes from the shared
+// catalog (loaded as a script before this file). Destructured to the bare
+// names the call sites below already use.
+const { CLIENT_IDS, CLIENT_LABELS: clientLabels, KNOWN_CLIENT_LIST: KNOWN_CLIENTS } = window.TokenMonitorClientCatalog;
+// Limits provider identity comes from its own shared catalog, bound here rather
+// than at its first use below because the icon tables are derived from it.
+const { LIMIT_PROVIDER_CATALOG: LIMIT_PROVIDERS, LIMIT_PROVIDER_IDS } = window.TokenMonitorLimitProviders;
 const reasonixSessionGuard = window.TokenMonitorReasonixSessionGuard;
 const { clientColors, fallbackModelColors, modelVendorFor, modelColor } = window.TokenMonitorUsageCharts;
 const motionPreferenceApi = window.TokenMonitorMotionPreference;
@@ -13,10 +19,17 @@ const tokenRateApi = window.TokenMonitorTokenRate;
 const { tokenRatePerSecond, tokenBurnPerMinute } = tokenRateApi;
 const reducedMotionMedia = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 const clientsWithIcon = new Set([
-  'claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'hermes', 'antigravity', 'cline', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilocode', 'commandcode', 'micode', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'proma', 'qodercn', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio',
+  'claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'hermes', 'antigravity', 'cline', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilo', 'commandcode', 'micode', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'proma', 'qodercn', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio', 'unsloth',
   'xai', 'openrouter', 'deepseek', 'meta', 'mistral', 'qwen', 'moonshot', 'zai', 'zaiteam', 'cohere', 'xiaomi', 'mimo', 'minimax', 'doubao', 'volcengine', 'qoder', 'trae', 'traework', 'ollama', 'thirdparty', 'hunyuan'
 ]);
-const limitMarksWithIcon = new Set([...clientsWithIcon, 'newapi', 'sub2api']);
+// Limits rows mark more ids than there are tracked clients: every provider, plus
+// relay ids that only ever appear as a limits row and have no catalog entry.
+// Derived rather than listed, because a provider whose id is missing here is
+// drawn as a bare dot — a defect nothing about adding a provider points at. The
+// mask rule behind each id is asserted from the same catalog in
+// limitProviderPresentationCoverage.test.js, which is what makes deriving safe:
+// an id in this set with no rule paints a solid square instead.
+const limitMarksWithIcon = new Set([...clientsWithIcon, ...LIMIT_PROVIDER_IDS, 'newapi', 'sub2api']);
 
 function osIconFor(platform) {
   const prefix = String(platform || '').toLowerCase().split('-')[0];
@@ -50,37 +63,6 @@ function iconKindFor(rowData, breakdown) {
     : { kind: 'dot' };
 }
 
-const KNOWN_CLIENTS = [
-  { id: 'claude', label: 'Claude Code' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'opencode', label: 'OpenCode' },
-  { id: 'hermes', label: 'Hermes Agent' },
-  { id: 'openclaw', label: 'OpenClaw' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'antigravity', label: 'Antigravity' },
-  { id: 'cline', label: 'Cline' },
-  { id: 'kimi', label: 'Kimi' },
-  { id: 'qwen', label: 'Qwen' },
-  { id: 'grok', label: 'Grok Build' },
-  { id: 'copilot', label: 'GitHub Copilot' },
-  { id: 'pi', label: 'Pi' },
-  { id: 'zed', label: 'Zed' },
-  { id: 'kilocode', label: 'Kilo Code' },
-  { id: 'commandcode', label: 'Command Code' },
-  { id: 'micode', label: 'MiMo Code' },
-  { id: 'zcode', label: 'ZCode' },
-  { id: 'kiro', label: 'Kiro' },
-  { id: 'codebuddy', label: 'CodeBuddy' },
-  { id: 'workbuddy', label: 'WorkBuddy' },
-  { id: 'proma', label: 'Proma' },
-  { id: 'qodercn', label: 'Qoder CN' },
-  { id: 'reasonix', label: 'Reasonix' },
-  { id: 'dsh', label: 'DeepSeek Harness' },
-  { id: 'cherrystudio', label: 'Cherry Studio' },
-  { id: 'lmstudio', label: 'LM Studio' },
-  { id: 'trae', label: 'Trae CN' },
-  { id: 'traework', label: 'Trae Work CN' }
-];
 // Clients collected through their own Electron lane (createTraeCollection
 // instances in main.js) rather than the shared tokscale collector. Each one's
 // settings row renders the same disclosure panel off the lane's pushed status.
@@ -100,31 +82,6 @@ const COLLECTION_LANE_CLIENTS = {
 };
 const isCollectionLaneClient = (clientId) => Boolean(COLLECTION_LANE_CLIENTS[clientId]);
 const collectionLaneClient = (clientId) => COLLECTION_LANE_CLIENTS[clientId] || null;
-const LIMIT_PROVIDERS = [
-  { id: 'claude', label: 'Claude', settingsLabel: 'Claude Code' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'opencode', label: 'OpenCode' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'antigravity', label: 'Antigravity' },
-  { id: 'kimi', label: 'Kimi' },
-  { id: 'grok', label: 'Grok' },
-  { id: 'copilot', label: 'GitHub Copilot' },
-  { id: 'zed', label: 'Zed' },
-  { id: 'commandcode', label: 'Command Code' },
-  { id: 'mimo', label: 'MiMo' },
-  { id: 'zai', label: 'GLM' },
-  { id: 'zaiteam', label: 'GLM Team' },
-  { id: 'kiro', label: 'Kiro' },
-  { id: 'workbuddy', label: 'WorkBuddy' },
-  { id: 'qoder', label: 'Qoder' },
-  { id: 'deepseek', label: 'DeepSeek' },
-  { id: 'openrouter', label: 'OpenRouter' },
-  { id: 'minimax', label: 'Minimax' },
-  { id: 'volcengine', label: 'Volcengine' },
-  { id: 'ollama', label: 'Ollama' },
-  { id: 'trae', label: 'Trae CN' },
-  { id: 'thirdparty', label: 'Third-party APIs' }
-];
 const LIMIT_PROVIDER_ACCOUNT_GROUP_IDS = {
   claude: 'claudeAccountGroup',
   codex: 'codexAccountGroup',
@@ -145,6 +102,7 @@ const LIMIT_PROVIDER_ACCOUNT_GROUP_IDS = {
   trae: 'traeAccountGroup',
   commandcode: 'commandcodeAccountGroup',
   ollama: 'ollamaAccountGroup',
+  alibaba: 'alibabaAccountGroup',
   thirdparty: 'thirdpartyAccountGroup'
 };
 const LIMIT_PROVIDER_ACCOUNT_STATUS_IDS = {
@@ -167,6 +125,7 @@ const LIMIT_PROVIDER_ACCOUNT_STATUS_IDS = {
   trae: 'traeAccountStatus',
   commandcode: 'commandcodeAccountStatus',
   ollama: 'ollamaAccountStatus',
+  alibaba: 'alibabaAccountStatus',
   thirdparty: 'thirdpartyStatus'
 };
 const LIMIT_PROVIDER_CONNECTION_DETAIL_KEYS = {
@@ -179,8 +138,13 @@ const TRAY_ICON_VARIANTS = [
   { id: 'claude-brand', label: 'Claude', after: 'claude' },
   { id: 'chatgpt', label: 'ChatGPT', after: 'codex' }
 ];
+// The ids the tray has artwork for. Providers are derived for the same reason as
+// above and had drifted from it: Alibaba Cloud was added to the mark set but not
+// here, so the picker previewed its logo from the svg while the tray itself,
+// which draws only what deliverTrayProviderIcons rasterized, fell back to "A".
 const trayIconProviderIds = new Set([
   ...clientsWithIcon,
+  ...LIMIT_PROVIDER_IDS,
   ...TRAY_ICON_VARIANTS.map((provider) => provider.id)
 ]);
 const TRAY_ICON_PROVIDERS = [
@@ -197,6 +161,7 @@ const TRAY_ICON_PROVIDERS = [
 const DEFAULT_LIMIT_PROVIDER_ORDER = LIMIT_PROVIDERS.map((provider) => provider.id).join(',');
 const limitProviderOrderApi = window.TokenMonitorLimitProviderOrder;
 const limitProviderPresentationApi = window.TokenMonitorLimitProviderPresentation;
+const limitResetMotionApi = window.TokenMonitorLimitResetMotion;
 const appUpdatePresentationApi = window.TokenMonitorAppUpdatePresentation;
 const accountIdentityApi = window.TokenMonitorAccountIdentity;
 const clientStatusPresentationApi = window.TokenMonitorClientStatusPresentation;
@@ -335,7 +300,12 @@ const TOKEN_MONITOR_WSL_SQLITE_GUIDE_URL = `${TOKEN_MONITOR_REPOSITORY_URL}/blob
 const serviceStatusProviderPreferencesApi = window.TokenMonitorServiceStatusProviderPreferences;
 const SETTINGS_SECTION_IDS = ['general', 'main', 'window', 'appearance', 'tools', 'limits', 'subscriptions', 'sync'];
 const REFRESH_BUTTON_FEEDBACK_MS = 700;
+const LIVE_TOKEN_RATE_ACTIVE_MS = 8000;
+const LIVE_TOKEN_RATE_CLEAR_MS = 3 * 60 * 1000;
 const CODEX_PENDING_ACTIVE_GRACE_MS = 30000;
+const LIMIT_RESET_MOTION_EASING = 'cubic-bezier(0.333, 0.667, 0.667, 1)';
+const LIMIT_RESET_GLOW_MS = 700;
+const LIMIT_RESET_GLOW_LEAD_MS = 252;
 const initialFloatingBubble = window.__TOKEN_MONITOR_INITIAL_FLOATING_BUBBLE__ || { collapsed: false, side: null };
 const initialViewState = window.__TOKEN_MONITOR_INITIAL_VIEW_STATE__ || {};
 let initialBreakdownPreferenceApplied = typeof initialViewState.breakdown === 'string';
@@ -369,6 +339,8 @@ state.toolPreferenceSourceSignature = '';
 state.limitProviderRenderSignature = '';
 state.limitPanelRenderSignature = '';
 state.settingsPushRevision = 0;
+state.limitProviderSelectionRevision = 0;
+state.pendingLimitProviderSelection = null;
 state.homeHistoryLoadedSignature = '';
 state.homeHistoryRetrySignature = '';
 state.homeReturnVisible = false;
@@ -392,13 +364,13 @@ let directBreakdownOverride = null;
 state.projectSettingsExpanded = false;
 state.homeActivitySettingsExpanded = false;
 state.settingsSections = Object.fromEntries(SETTINGS_SECTION_IDS.map((id) => [id, false]));
-const defaultAppearance = { glassOpacity: 68, glassBlur: 32, zoomFactor: 1, systemGlass: true, windowsBackdrop: 'acrylic', reduceMotion: 'system', showLiveDot: true, showToolIcons: true, titleIconOnly: true, showCompactTotalTokens: false, compactTokenUnits: 'western', settingsInTitlebar: false };
+const defaultAppearance = { glassOpacity: 68, glassBlur: 32, zoomFactor: 1, systemGlass: true, windowsBackdrop: 'acrylic', reduceMotion: 'system', showLiveDot: true, showToolIcons: true, titleIconOnly: true, showCompactTotalTokens: false, showLiveTokenRate: false, liveTokenRateScope: 'all', compactTokenUnits: 'western', settingsInTitlebar: false };
 let preferenceDrag = null;
 let viewSwitcherLongPressTimer = null;
 let viewSwitcherLongPressTriggered = false;
 let viewSwitcherHoverCloseTimer = null;
 const els = {
-  shell: document.querySelector('.shell'), status: document.getElementById('status'), liveDot: document.getElementById('liveDot'), tokenRateReveal: document.getElementById('tokenRateReveal'), totalTokens: document.getElementById('totalTokens'), totalTokensCompact: document.getElementById('totalTokensCompact'), cost: document.getElementById('cost'), homePanel: document.getElementById('homePanel'), breakdown: document.getElementById('breakdown'), serviceStatusPanel: document.getElementById('serviceStatusPanel'), limitsPanel: document.getElementById('limitsPanel'), trendsPanel: document.getElementById('trendsPanel'), viewSwitcher: document.getElementById('viewSwitcher'), pinButton: document.getElementById('pinButton'), utilityActions: document.getElementById('utilityActions'), settingsButton: document.getElementById('settingsButton'), settingsPanel: document.getElementById('settingsPanel'), languageInput: document.getElementById('languageInput'), currencyInput: document.getElementById('currencyInput'), currencyRateRow: document.getElementById('currencyRateRow'), currencyRateModeAuto: document.getElementById('currencyRateModeAuto'), currencyRateModeManual: document.getElementById('currencyRateModeManual'), currencyRateManualField: document.getElementById('currencyRateManualField'), currencyRateOverrideInput: document.getElementById('currencyRateOverrideInput'), currencyRateStatus: document.getElementById('currencyRateStatus'), hubUrlInput: document.getElementById('hubUrlInput'), secretInput: document.getElementById('secretInput'), deviceIdInput: document.getElementById('deviceIdInput'), limitProviderCheckboxes: document.getElementById('limitProviderCheckboxes'), limitsRefreshInput: document.getElementById('limitsRefreshInput'), limitsRefreshAdaptiveNote: document.getElementById('limitsRefreshAdaptiveNote'), showLimitSourceInput: document.getElementById('showLimitSourceInput'), maskLimitAccountEmailsInput: document.getElementById('maskLimitAccountEmailsInput'), showLimitUsedInputs: Array.from(document.querySelectorAll('input[name="showLimitUsed"]')), liveDotInput: document.getElementById('liveDotInput'), toolIconsInput: document.getElementById('toolIconsInput'), floatingBubbleInput: document.getElementById('floatingBubbleInput'), floatingBubbleTriggerInputs: Array.from(document.querySelectorAll('input[name="floatingBubbleTrigger"]')), floatingBubbleTriggerRow: document.getElementById('floatingBubbleTriggerRow'), floatingBubbleContentInput: document.getElementById('floatingBubbleContentInput'), floatingBubbleContentRow: document.getElementById('floatingBubbleContentRow'), floatingBubbleComposer: document.getElementById('floatingBubbleComposer'), floatingBubbleContent: document.getElementById('floatingBubbleContent'), discordRpcInput: document.getElementById('discordRpcInput'), windowBehaviorInput: document.getElementById('windowBehaviorInput'), keepAboveTaskbarInput: document.getElementById('keepAboveTaskbarInput'), keepAboveTaskbarRow: document.getElementById('keepAboveTaskbarRow'), showTrayIconInput: document.getElementById('showTrayIconInput'), showTrayProviderBadgeInput: document.getElementById('showTrayProviderBadgeInput'), hideAppIconInput: document.getElementById('hideAppIconInput'), hideAppIconRow: document.getElementById('hideAppIconRow'), hideAppIconOptions: document.getElementById('hideAppIconOptions'), trayModeInput: document.getElementById('trayModeInput'), trayContentInput: document.getElementById('trayContentInput'), trayComposer: document.getElementById('trayComposer'), windowToggleShortcutValue: document.getElementById('windowToggleShortcutValue'), windowToggleShortcutClearButton: document.getElementById('windowToggleShortcutClearButton'), windowToggleShortcutNote: document.getElementById('windowToggleShortcutNote'), glassInput: document.getElementById('glassInput'), blurInput: document.getElementById('blurInput'), zoomInput: document.getElementById('zoomInput'), resetGlassButton: document.getElementById('resetGlassButton'), resetDepthButton: document.getElementById('resetDepthButton'), resetZoomButton: document.getElementById('resetZoomButton'), saveSettingsButton: document.getElementById('saveSettingsButton'), clientDisplayList: document.getElementById('clientDisplayList'), wslScanInput: document.getElementById('wslScanInput'), wslScanRow: document.getElementById('wslScanRow'), wslPanel: document.getElementById('wslPanel'), openConfigButton: document.getElementById('openConfigButton'), exportAutoInput: document.getElementById('exportAutoInput'), exportAutoDetails: document.getElementById('exportAutoDetails'), exportAutoStatus: document.getElementById('exportAutoStatus'), exportDirLabel: document.getElementById('exportDirLabel'), exportPickDirButton: document.getElementById('exportPickDirButton'), exportIntervalInput: document.getElementById('exportIntervalInput'), exportNowButton: document.getElementById('exportNowButton'), refreshButton: document.getElementById('refreshButton'), minButton: document.getElementById('minButton'), closeButton: document.getElementById('closeButton'), floatingBubbleTab: document.getElementById('floatingBubbleTab'),
+  shell: document.querySelector('.shell'), status: document.getElementById('status'), liveDot: document.getElementById('liveDot'), tokenRateReveal: document.getElementById('tokenRateReveal'), liveTokenRate: document.getElementById('liveTokenRate'), liveTokenRateValue: document.getElementById('liveTokenRateValue'), totalTokens: document.getElementById('totalTokens'), totalTokensCompact: document.getElementById('totalTokensCompact'), cost: document.getElementById('cost'), homePanel: document.getElementById('homePanel'), breakdown: document.getElementById('breakdown'), serviceStatusPanel: document.getElementById('serviceStatusPanel'), limitsPanel: document.getElementById('limitsPanel'), trendsPanel: document.getElementById('trendsPanel'), viewSwitcher: document.getElementById('viewSwitcher'), pinButton: document.getElementById('pinButton'), utilityActions: document.getElementById('utilityActions'), settingsButton: document.getElementById('settingsButton'), settingsPanel: document.getElementById('settingsPanel'), languageInput: document.getElementById('languageInput'), currencyInput: document.getElementById('currencyInput'), currencyRateRow: document.getElementById('currencyRateRow'), currencyRateModeAuto: document.getElementById('currencyRateModeAuto'), currencyRateModeManual: document.getElementById('currencyRateModeManual'), currencyRateManualField: document.getElementById('currencyRateManualField'), currencyRateOverrideInput: document.getElementById('currencyRateOverrideInput'), currencyRateStatus: document.getElementById('currencyRateStatus'), hubUrlInput: document.getElementById('hubUrlInput'), secretInput: document.getElementById('secretInput'), deviceIdInput: document.getElementById('deviceIdInput'), limitProviderCheckboxes: document.getElementById('limitProviderCheckboxes'), limitsRefreshInput: document.getElementById('limitsRefreshInput'), limitsRefreshAdaptiveNote: document.getElementById('limitsRefreshAdaptiveNote'), showLimitSourceInput: document.getElementById('showLimitSourceInput'), maskLimitAccountEmailsInput: document.getElementById('maskLimitAccountEmailsInput'), showLimitUsedInputs: Array.from(document.querySelectorAll('input[name="showLimitUsed"]')), liveDotInput: document.getElementById('liveDotInput'), toolIconsInput: document.getElementById('toolIconsInput'), floatingBubbleInput: document.getElementById('floatingBubbleInput'), floatingBubbleTriggerInputs: Array.from(document.querySelectorAll('input[name="floatingBubbleTrigger"]')), floatingBubbleTriggerRow: document.getElementById('floatingBubbleTriggerRow'), floatingBubbleContentInput: document.getElementById('floatingBubbleContentInput'), floatingBubbleContentRow: document.getElementById('floatingBubbleContentRow'), floatingBubbleComposer: document.getElementById('floatingBubbleComposer'), floatingBubbleContent: document.getElementById('floatingBubbleContent'), discordRpcInput: document.getElementById('discordRpcInput'), windowBehaviorInput: document.getElementById('windowBehaviorInput'), keepAboveTaskbarInput: document.getElementById('keepAboveTaskbarInput'), keepAboveTaskbarRow: document.getElementById('keepAboveTaskbarRow'), showTrayIconInput: document.getElementById('showTrayIconInput'), showTrayProviderBadgeInput: document.getElementById('showTrayProviderBadgeInput'), hideAppIconInput: document.getElementById('hideAppIconInput'), hideAppIconRow: document.getElementById('hideAppIconRow'), hideAppIconOptions: document.getElementById('hideAppIconOptions'), trayModeInput: document.getElementById('trayModeInput'), trayContentInput: document.getElementById('trayContentInput'), trayComposer: document.getElementById('trayComposer'), windowToggleShortcutValue: document.getElementById('windowToggleShortcutValue'), windowToggleShortcutClearButton: document.getElementById('windowToggleShortcutClearButton'), windowToggleShortcutNote: document.getElementById('windowToggleShortcutNote'), glassInput: document.getElementById('glassInput'), blurInput: document.getElementById('blurInput'), zoomInput: document.getElementById('zoomInput'), resetGlassButton: document.getElementById('resetGlassButton'), resetDepthButton: document.getElementById('resetDepthButton'), resetZoomButton: document.getElementById('resetZoomButton'), saveSettingsButton: document.getElementById('saveSettingsButton'), clientDisplayList: document.getElementById('clientDisplayList'), wslScanInput: document.getElementById('wslScanInput'), wslScanRow: document.getElementById('wslScanRow'), wslPanel: document.getElementById('wslPanel'), openConfigButton: document.getElementById('openConfigButton'), exportAutoInput: document.getElementById('exportAutoInput'), exportAutoDetails: document.getElementById('exportAutoDetails'), exportAutoStatus: document.getElementById('exportAutoStatus'), exportDirLabel: document.getElementById('exportDirLabel'), exportPickDirButton: document.getElementById('exportPickDirButton'), exportIntervalInput: document.getElementById('exportIntervalInput'), exportNowButton: document.getElementById('exportNowButton'), refreshButton: document.getElementById('refreshButton'), minButton: document.getElementById('minButton'), closeButton: document.getElementById('closeButton'), floatingBubbleTab: document.getElementById('floatingBubbleTab'),
   subscriptionList: document.getElementById('subscriptionList'), subscriptionAddForm: document.getElementById('subscriptionAddForm'), subscriptionAddToggle: document.getElementById('subscriptionAddToggle'), subscriptionAddDetails: document.getElementById('subscriptionAddDetails'), subscriptionProviderInput: document.getElementById('subscriptionProviderInput'), subscriptionAccountInput: document.getElementById('subscriptionAccountInput'), subscriptionPlanNameInput: document.getElementById('subscriptionPlanNameInput'), subscriptionAmountInput: document.getElementById('subscriptionAmountInput'), subscriptionCurrencyInput: document.getElementById('subscriptionCurrencyInput'), subscriptionIntervalCountInput: document.getElementById('subscriptionIntervalCountInput'), subscriptionIntervalInput: document.getElementById('subscriptionIntervalInput'), subscriptionStartDateInput: document.getElementById('subscriptionStartDateInput'), subscriptionAutoRenewInput: document.getElementById('subscriptionAutoRenewInput'), subscriptionNextRenewalInput: document.getElementById('subscriptionNextRenewalInput'), subscriptionNote: document.getElementById('subscriptionNote'), subscriptionOrphanNotice: document.getElementById('subscriptionOrphanNotice'), subscriptionOrphanText: document.getElementById('subscriptionOrphanText'), subscriptionOrphanAdopt: document.getElementById('subscriptionOrphanAdopt'), subscriptionOrphanDiscard: document.getElementById('subscriptionOrphanDiscard'), subscriptionSyncError: document.getElementById('subscriptionSyncError'), subscriptionNextRenewalLabel: document.getElementById('subscriptionNextRenewalLabel'), subscriptionNextRenewalNote: document.getElementById('subscriptionNextRenewalNote'), subscriptionSubmit: document.getElementById('subscriptionSubmit'), subscriptionCancelEdit: document.getElementById('subscriptionCancelEdit'), subscriptionTotalRow: document.getElementById('subscriptionTotalRow'), subscriptionErrorMessage: document.getElementById('subscriptionErrorMessage'), subscriptionPlanFields: document.getElementById('subscriptionPlanFields'), subscriptionTopUpFields: document.getElementById('subscriptionTopUpFields'), subscriptionTopUpList: document.getElementById('subscriptionTopUpList'), subscriptionTopUpDateInput: document.getElementById('subscriptionTopUpDateInput'), subscriptionTopUpAmountInput: document.getElementById('subscriptionTopUpAmountInput'), subscriptionTopUpAddButton: document.getElementById('subscriptionTopUpAddButton'), subscriptionAmountRow: document.getElementById('subscriptionAmountRow'), subscriptionTopUpHeadingRow: document.getElementById('subscriptionTopUpHeadingRow'), subscriptionKindInputs: [...document.querySelectorAll('input[name="subscriptionKind"]')]
 };
 Object.assign(els, {
@@ -490,6 +462,9 @@ Object.assign(els, {
   appUpdateMessage: document.getElementById('appUpdateMessage'),
   titleIconInput: document.getElementById('titleIconInput'),
   showCompactTotalTokensInput: document.getElementById('showCompactTotalTokensInput'),
+  showLiveTokenRateInput: document.getElementById('showLiveTokenRateInput'),
+  liveTokenRateScopeRow: document.getElementById('liveTokenRateScopeRow'),
+  liveTokenRateScopeInput: document.getElementById('liveTokenRateScopeInput'),
   compactTokenUnitsRow: document.getElementById('compactTokenUnitsRow'),
   compactTokenUnitsInput: document.getElementById('compactTokenUnitsInput'),
   swapSettingsRefreshInput: document.getElementById('swapSettingsRefreshInput'),
@@ -874,6 +849,145 @@ const tokenRateBoost = tokenRateApi.createTokenRateBoostController({
   prefersReducedMotion,
   onChange: () => renderTokenRate()
 });
+const liveTokenRateTracker = tokenRateApi.createLiveTokenRateGroupTracker({
+  now: () => Date.now(),
+  activeMs: LIVE_TOKEN_RATE_ACTIVE_MS,
+  clearMs: LIVE_TOKEN_RATE_CLEAR_MS
+});
+let liveTokenRateContext = '';
+let liveTokenRateIdleTimer = null;
+let liveTokenRateAnimationTimer = null;
+let liveTokenRateRenderedRevision = 0;
+
+function liveTokenRateSourceKey(periodSource) {
+  return [
+    state.mode,
+    state.settings?.hubMode || '',
+    state.settings?.hubUrl || '',
+    state.settings?.deviceId || '',
+    state.settings?.clients || '',
+    effectiveLiveTokenRateScope(),
+    periodSource
+  ].join('|');
+}
+
+function effectiveLiveTokenRateScope() {
+  const hubMode = state.settings?.hubMode;
+  const syncMode = hubMode === 'client' || hubMode === 'host';
+  return syncMode && state.settings?.liveTokenRateScope !== 'device' ? 'all' : 'device';
+}
+
+function clearLiveTokenRateTimers() {
+  if (liveTokenRateIdleTimer) clearTimeout(liveTokenRateIdleTimer);
+  if (liveTokenRateAnimationTimer) clearTimeout(liveTokenRateAnimationTimer);
+  liveTokenRateIdleTimer = null;
+  liveTokenRateAnimationTimer = null;
+}
+
+function resetLiveTokenRateTracking() {
+  liveTokenRateContext = '';
+  liveTokenRateRenderedRevision = 0;
+  liveTokenRateTracker.reset();
+  clearLiveTokenRateTimers();
+}
+
+function scheduleLiveTokenRateExpiry() {
+  if (liveTokenRateIdleTimer) clearTimeout(liveTokenRateIdleTimer);
+  liveTokenRateIdleTimer = null;
+  const expiresAt = liveTokenRateTracker.nextExpiryAt();
+  if (!expiresAt) return;
+  liveTokenRateIdleTimer = setTimeout(() => {
+    liveTokenRateIdleTimer = null;
+    renderLiveTokenRate();
+    scheduleLiveTokenRateExpiry();
+  }, Math.max(0, expiresAt - Date.now()) + 10);
+}
+
+function observeLiveTokenRate(stats) {
+  if (state.settings?.showLiveTokenRate !== true) return;
+  const selection = tokenRateApi.selectLiveTokenRatePeriods(
+    stats,
+    state.settings?.deviceId,
+    state.settings?.hubMode,
+    effectiveLiveTokenRateScope()
+  );
+  const sourceKey = liveTokenRateSourceKey(selection.source);
+  if (sourceKey !== liveTokenRateContext) {
+    liveTokenRateContext = sourceKey;
+    liveTokenRateTracker.reset(selection.entries);
+    clearLiveTokenRateTimers();
+    renderLiveTokenRate();
+    return;
+  }
+  const result = liveTokenRateTracker.observe(selection.entries);
+  if (!result.changed) return;
+  scheduleLiveTokenRateExpiry();
+  renderLiveTokenRate();
+}
+
+function formatLiveTokenRate(value) {
+  const rate = Math.max(0, Number(value) || 0);
+  if (rate > 0 && rate < 0.1) return '<0.1';
+  if (rate > 0 && rate < 1) {
+    return rate.toLocaleString(currentLocale(), { maximumFractionDigits: 1 });
+  }
+  return formatCompact(rate, effectiveCompactTokenUnits(), currentLocale());
+}
+
+function renderLiveTokenRate() {
+  if (!els.liveTokenRate || !els.liveTokenRateValue) return;
+  const enabled = state.settings?.showLiveTokenRate === true;
+  if (!enabled) resetLiveTokenRateTracking();
+  els.liveTokenRate.classList.toggle('hidden', !enabled);
+  syncLiveTokenRateFooterState();
+  if (!enabled) return;
+
+  const burn = state.settings?.tokenRateMode === 'burn';
+  const sample = liveTokenRateTracker.getSample();
+  const unit = burn ? 'TPM' : 'tok/s';
+  const rate = sample ? (burn ? sample.burn : sample.speed) : null;
+  const value = rate === null ? '—' : formatLiveTokenRate(rate);
+  const text = `${value} ${unit}`;
+  const idle = !sample || sample.idle === true;
+  els.liveTokenRateValue.textContent = text;
+  els.liveTokenRate.dataset.mode = burn ? 'burn' : 'speed';
+  els.liveTokenRate.classList.toggle('is-idle', idle);
+  if (idle) els.liveTokenRate.classList.remove('is-fresh');
+  const scope = t(effectiveLiveTokenRateScope() === 'all'
+    ? 'settings.appearance.liveTokenRateScopeAll'
+    : 'settings.appearance.liveTokenRateScopeDevice');
+  const labelKey = idle && sample
+    ? (burn ? 'home.liveTokenRate.burnIdleTitle' : 'home.liveTokenRate.speedIdleTitle')
+    : (burn ? 'home.liveTokenRate.burnTitle' : 'home.liveTokenRate.speedTitle');
+  const label = t(labelKey, { value: text, scope });
+  els.liveTokenRate.title = label;
+  els.liveTokenRate.setAttribute('aria-label', label);
+
+  if (!idle && sample.revision !== liveTokenRateRenderedRevision) {
+    liveTokenRateRenderedRevision = sample.revision;
+    els.liveTokenRate.classList.remove('is-fresh');
+    void els.liveTokenRate.offsetWidth;
+    els.liveTokenRate.classList.add('is-fresh');
+    if (liveTokenRateAnimationTimer) clearTimeout(liveTokenRateAnimationTimer);
+    liveTokenRateAnimationTimer = setTimeout(() => {
+      liveTokenRateAnimationTimer = null;
+      els.liveTokenRate?.classList.remove('is-fresh');
+    }, 650);
+  }
+}
+
+function syncLiveTokenRateFooterState() {
+  const footer = els.liveTokenRate?.closest('.footer');
+  if (!footer) return;
+  const enabled = state.settings?.showLiveTokenRate === true;
+  const obscured = !els.toolDetailFooter?.classList.contains('hidden')
+    || !els.appUpdatePill?.classList.contains('hidden');
+  footer.classList.toggle('live-token-rate-enabled', enabled);
+  footer.classList.toggle('live-token-rate-obscured', enabled && obscured);
+  els.liveTokenRate.tabIndex = enabled && !obscured ? 0 : -1;
+  els.liveTokenRate.setAttribute('aria-hidden', String(!enabled || obscured));
+}
+
 function tokenRateText(rate, burn) {
   // formatCompact rounds, so a sub-0.5 rate would render as a bare "0". Treat that as no
   // data and stay hidden rather than claim a zero pace.
@@ -884,16 +998,18 @@ function tokenRateText(rate, burn) {
     : '';
 }
 function renderTokenRate() {
-  if (!els.tokenRateReveal) return;
-  tokenRateBoost.refresh();
-  const { burn, rate } = currentTokenRateValue();
-  const boost = tokenRateBoost.getSnapshot();
-  const displayRate = boost ? boost.displayRate : rate;
-  const text = tokenRateText(displayRate, boost ? boost.mode === 'burn' : burn);
-  els.tokenRateReveal.textContent = text;
-  els.tokenRateReveal.classList.toggle('has-value', Boolean(text));
-  els.tokenRateReveal.classList.toggle('boosting', boost?.phase === 'boosting');
-  els.tokenRateReveal.classList.toggle('settling', boost?.phase === 'settling');
+  if (els.tokenRateReveal) {
+    tokenRateBoost.refresh();
+    const { burn, rate } = currentTokenRateValue();
+    const boost = tokenRateBoost.getSnapshot();
+    const displayRate = boost ? boost.displayRate : rate;
+    const text = tokenRateText(displayRate, boost ? boost.mode === 'burn' : burn);
+    els.tokenRateReveal.textContent = text;
+    els.tokenRateReveal.classList.toggle('has-value', Boolean(text));
+    els.tokenRateReveal.classList.toggle('boosting', boost?.phase === 'boosting');
+    els.tokenRateReveal.classList.toggle('settling', boost?.phase === 'settling');
+  }
+  renderLiveTokenRate();
 }
 function startTokenRateBoost(event) {
   if (!tokenRateBoost.start(event)) return;
@@ -912,7 +1028,9 @@ function suppressTokenRateClickAfterHold(event) {
 // The title mark is the only pixel of the reveal that can take a click: a drag region does
 // not deliver mouse events, so this control and its hover target are the same no-drag island.
 //
-// Deliberately pointer-only, and the mark stays a non-focusable aria-hidden span. A focusable
+// The title affordance is deliberately pointer-only, and the mark stays a non-focusable
+// aria-hidden span. The persistent footer reading is the separate keyboard-accessible path.
+// A focusable
 // control here is worse than no keyboard path: the window assigns focus to a control when it
 // is shown, and Chromium then derives :focus-visible from that activation rather than from
 // any click, so the reveal reopens with a focus ring on a window the user just summoned with
@@ -1075,6 +1193,7 @@ function renderAppUpdatePill() {
     els.appUpdatePillRestart.removeAttribute('title');
     els.appUpdatePillRestart.removeAttribute('aria-label');
     setAppUpdatePillDisclosure(false);
+    syncLiveTokenRateFooterState();
     return;
   }
   const hasReleaseNotes = releaseNoteGroupsForCurrentLocale(s.latest).length > 0;
@@ -1103,6 +1222,7 @@ function renderAppUpdatePill() {
       ? `v${version}`
       : `↑ v${version}`;
   }
+  syncLiveTokenRateFooterState();
 }
 function releaseNoteGroupsForCurrentLocale(latest) {
   return appUpdatePresentationApi.releaseNoteGroupsForLocale(latest?.releaseNotes, currentLocale());
@@ -1463,6 +1583,7 @@ function animateTotalNumber(el, from, to, duration) {
 
 const rowNumberAnimations = new Map();
 const rowBarAnimations = new Map();
+const limitResetNumberAnimations = new Map();
 const rowRenderFingerprints = new WeakMap();
 const toolDetailData = new WeakMap();
 const largeSessionContainmentScheduler = createAfterLayoutScheduler(
@@ -1510,6 +1631,11 @@ function settleMotionAnimations() {
     delete el.dataset.motionTarget;
   }
   rowNumberAnimations.clear();
+  for (const [el, motion] of limitResetNumberAnimations) {
+    cancelAnimationFrame(motion.handle);
+    el.textContent = `${formatPercent(motion.target)} ${motion.suffix}`;
+  }
+  limitResetNumberAnimations.clear();
   for (const animation of document.getAnimations?.() || []) {
     try { animation.finish(); } catch (_) { animation.cancel(); }
   }
@@ -1635,7 +1761,14 @@ function animateBreakdownFrom(snapshot, { duration = 420 } = {}) {
   }
 }
 
-function animateBarBetween(fill, fromScale, toScale, delay = 0, duration = 420) {
+function animateBarBetween(
+  fill,
+  fromScale,
+  toScale,
+  delay = 0,
+  duration = 420,
+  easing = 'cubic-bezier(0.22, 1, 0.36, 1)'
+) {
   if (!fill?.animate) return;
   const previous = rowBarAnimations.get(fill);
   const previousIsActive = previous?.animation.pending || previous?.animation.playState === 'running';
@@ -1649,7 +1782,7 @@ function animateBarBetween(fill, fromScale, toScale, delay = 0, duration = 420) 
   ], {
     duration,
     delay,
-    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    easing,
     fill: 'backwards'
   });
   const motion = { animation, target: toScale };
@@ -1659,6 +1792,64 @@ function animateBarBetween(fill, fromScale, toScale, delay = 0, duration = 420) 
   animation.onfinish = forget;
   animation.oncancel = forget;
   rowBarAnimations.set(fill, motion);
+}
+
+function animateLimitResetPercent(el, from, to, duration, startedAt = performance.now()) {
+  if (!el) return;
+  const suffix = el.dataset.limitMotionSuffix || '';
+  if (prefersReducedMotion() || !Number.isFinite(from) || !Number.isFinite(to) || from === to) {
+    el.textContent = `${formatPercent(to)} ${suffix}`;
+    return;
+  }
+  const delta = to - from;
+  const motion = { handle: 0, target: to, suffix };
+  let renderedText = `${formatPercent(from)} ${suffix}`;
+  el.textContent = renderedText;
+  function frame(now) {
+    if (prefersReducedMotion()) {
+      el.textContent = `${formatPercent(to)} ${suffix}`;
+      if (limitResetNumberAnimations.get(el) === motion) limitResetNumberAnimations.delete(el);
+      return;
+    }
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - ((1 - progress) * (1 - progress));
+    const nextText = `${formatPercent(from + delta * eased)} ${suffix}`;
+    // The displayed value is integer-rounded, so several animation frames can
+    // resolve to the same string. Avoid invalidating text layout on those frames.
+    if (nextText !== renderedText) {
+      renderedText = nextText;
+      el.textContent = nextText;
+    }
+    if (progress < 1) {
+      motion.handle = requestAnimationFrame(frame);
+    } else if (limitResetNumberAnimations.get(el) === motion) {
+      limitResetNumberAnimations.delete(el);
+    }
+  }
+  motion.handle = requestAnimationFrame(frame);
+  limitResetNumberAnimations.set(el, motion);
+}
+
+function animateLimitResetCompletion(fill, duration) {
+  if (!fill?.animate || prefersReducedMotion()) return;
+  const highlight = document.createElement('span');
+  highlight.className = 'limit-meter-completion';
+  fill.append(highlight);
+  const animation = highlight.animate([
+    { opacity: 0 },
+    {
+      offset: LIMIT_RESET_GLOW_LEAD_MS / LIMIT_RESET_GLOW_MS,
+      opacity: 0.52
+    },
+    { opacity: 0 }
+  ], {
+    duration: LIMIT_RESET_GLOW_MS,
+    delay: Math.max(0, duration - LIMIT_RESET_GLOW_LEAD_MS),
+    easing: 'linear'
+  });
+  const removeHighlight = () => highlight.remove();
+  animation.onfinish = removeHighlight;
+  animation.oncancel = removeHighlight;
 }
 
 function captureTrendBarMotion() {
@@ -1744,6 +1935,17 @@ function applyBarScale(fill, scale) {
   fill.style.setProperty('--bar-scale', String(safeScale));
   if (!state.animateBarsFromZero || prefersReducedMotion() || !fill.animate) return;
   animateBarBetween(fill, 0, safeScale, 0, 420);
+}
+
+function animateCachedLimitBarsFromZero() {
+  if (!state.animateBarsFromZero || prefersReducedMotion()) return;
+  for (const fill of els.limitsPanel?.querySelectorAll('.limit-meter-fill') || []) {
+    const targetScale = Math.max(
+      0,
+      Math.min(1, Number(fill.style.getPropertyValue('--bar-scale')) || 0)
+    );
+    animateBarBetween(fill, 0, targetScale, 0, 420);
+  }
 }
 
 function rowTemplate(rowData) {
@@ -1938,6 +2140,7 @@ function renderActiveToolDetail() {
 function renderToolDetailFooter() {
   const active = activeToolDetail();
   els.toolDetailFooter.classList.toggle('hidden', !active);
+  syncLiveTokenRateFooterState();
   if (!active) return;
   const mode = state.toolDetailMode;
   els.toolDetailFooter.setAttribute('aria-label', active.detail.name);
@@ -2583,8 +2786,16 @@ function subscriptionLocalDate(dateString) {
 // (openrouter, deepseek, thirdparty, zai…) simply produce nothing, which is the
 // correct answer: their spend is either pay-as-you-go or spread across clients
 // with no way to attribute it.
+//
+// Membership comes from the catalog rather than from clientLabels. That map is a
+// display lookup and deliberately carries ids that are not tracked clients, so
+// keying off it would let "we can render a name for this" stand in for "this
+// provider names a client we count tokens for". The two happen to agree today
+// only because the one label-only id is not a limits provider.
+const catalogClientIds = new Set(CLIENT_IDS);
+
 function subscriptionUsageCostUsd(providerId) {
-  if (!Object.prototype.hasOwnProperty.call(clientLabels, providerId)) return null;
+  if (!catalogClientIds.has(providerId)) return null;
   const month = state.stats?.periods?.month;
   const cost = Number(month?.clientCosts?.[providerId] || 0);
   return cost > 0 ? cost : null;
@@ -3867,13 +4078,14 @@ function configuredLimitProviderOrder() {
 }
 
 function configuredLimitProviderSelection() {
-  const raw = state.settings?.limitProviders;
+  const raw = state.pendingLimitProviderSelection?.limitProviders ?? state.settings?.limitProviders;
   const source = raw === undefined || raw === null ? DEFAULT_LIMIT_PROVIDER_ORDER : raw;
   return limitProviderOrderApi.normalizeLimitProviderSelection(source, LIMIT_PROVIDERS);
 }
 
 function enabledLimitProviderSet() {
-  if (state.settings?.limitsEnabled === false) return new Set();
+  const limitsEnabled = state.pendingLimitProviderSelection?.limitsEnabled ?? state.settings?.limitsEnabled;
+  if (limitsEnabled === false) return new Set();
   return new Set(configuredLimitProviderSelection());
 }
 
@@ -4019,6 +4231,19 @@ function formatCommandcodeCreditsDetail(window) {
   const showUsed = Boolean(state.settings?.showLimitUsed);
   const value = showUsed ? Math.max(0, limit - remaining) : remaining;
   return `${formatMoney(value, window?.currency)} / ${formatMoney(limit, window?.currency)}`;
+}
+
+// ZCode plan buckets are token pools, so their detail counts tokens: "124M /
+// 305M" (remaining mode) or "181M / 305M" (used mode), from the same values
+// the meter derives from. Nothing when either side is missing — a bucket
+// without absolute units keeps its percentage-only look.
+function formatZcodeTokensDetail(window) {
+  const remaining = optionalFiniteNumber(window?.remaining);
+  const limit = optionalFiniteNumber(window?.limit);
+  if (remaining === null || limit === null || limit <= 0) return '';
+  const showUsed = Boolean(state.settings?.showLimitUsed);
+  const value = showUsed ? Math.max(0, limit - remaining) : remaining;
+  return `${formatCompact(value)} / ${formatCompact(limit)}`;
 }
 
 // One-line Overage value: "12.5 credits · $3.20" (credits used, then est. cost).
@@ -4466,21 +4691,34 @@ function limitMeterNode(color, percent, tone = 1) {
 function limitWindowNode(label, window, color, tone = 1, valueOverride = null, detailText = '') {
   const remaining = Number(window?.remainingPercent);
   const used = Number(window?.usedPercent);
+  const motionRemaining = limitResetMotionApi.remainingPercent(window);
   const showMeter = window?.showMeter !== false;
   const hasPercent = showMeter && (Number.isFinite(remaining) || Number.isFinite(used));
   // valueOverride windows carry a fixed (money/amount) label — keep their meter
   // on "remaining" so bar and label stay consistent; only percent-labelled
   // windows honour the used-mode flip.
   const showUsed = Boolean(state.settings?.showLimitUsed) && valueOverride == null;
-  const fillPercent = limitFillPercent(remaining, used, showUsed);
+  const fillPercent = limitResetMotionApi.displayPercent(
+    limitFillPercent(remaining, used, showUsed)
+  );
   const item = document.createElement('div');
   item.className = 'limit-window';
+  item.dataset.limitMotionKey = limitResetMotionApi.windowKey(label, window);
+  item.dataset.limitRemainingPercent = hasPercent && motionRemaining !== null
+    ? String(Math.max(0, Math.min(100, motionRemaining)))
+    : '';
+  item.dataset.limitDisplayPercent = hasPercent && fillPercent !== null ? String(fillPercent) : '';
+  item.dataset.limitResetAt = window?.resetsAt || '';
   const text = document.createElement('div');
   text.className = 'limit-window-text';
   const name = document.createElement('span');
   name.textContent = window?.label || label;
   const value = document.createElement('span');
   value.textContent = valueOverride != null ? valueOverride : formatLimitWindowValue(window, fillPercent, hasPercent, showUsed);
+  if (valueOverride == null && hasPercent && fillPercent !== null) {
+    value.dataset.limitMotionValue = String(fillPercent);
+    value.dataset.limitMotionSuffix = limitModeSuffix(showUsed);
+  }
   text.append(name, value);
   const meter = limitMeterNode(color, fillPercent, tone);
   const reset = document.createElement('div');
@@ -4524,7 +4762,9 @@ function providersByLimitProviderId(providers) {
 function renderLimitProviderMark(id, color) {
   const mark = document.createElement('span');
   if (limitMarksWithIcon.has(id)) {
-    mark.className = `limit-icon limit-icon-${id}`;
+    // .limit-icon sizes the mark, .row-icon-<id> supplies the mask: one table,
+    // shared with the breakdown rows, instead of a second copy per provider.
+    mark.className = `limit-icon row-icon-${id}`;
   } else {
     mark.className = 'dot';
     mark.style.background = color;
@@ -5107,19 +5347,61 @@ function renderProviderWindows(provider, color) {
       windows.append(node);
     }
   } else if (provider.provider === 'zai' || provider.provider === 'zaiteam') {
-    const fiveHour = windowForKind(provider, 'session');
+    // Billing-kind windows are one of three things: the subscription MCP
+    // monthly bucket (no metric, no limitId), ZCode Start/Weekend plan
+    // buckets (limitId set, per-model labels), or the cash balance
+    // (metric 'credits'). Each renders in its own slot below.
+    const session = windowForKind(provider, 'session');
     const weekly = windowForKind(provider, 'weekly');
-    const mcp = windowForKind(provider, 'billing');
-    if (fiveHour) {
-      const fiveHourNode = limitWindowNode('5-hour', fiveHour, color, 0.95);
-      if (!weekly) fiveHourNode.classList.add('limit-window-wide');
-      windows.append(fiveHourNode);
+    const billingWindows = windowsForKind(provider, 'billing');
+    const dailyWindows = windowsForKind(provider, 'daily');
+    const planBuckets = billingWindows.filter((window) => window?.limitId && !window?.metric);
+    const monthlyWindows = billingWindows.filter((window) => !window?.metric && !window?.limitId);
+    const balanceWindow = (provider.windows || []).find((window) => window?.metric === 'credits');
+    const nodes = [
+      session && limitWindowNode(session.label || '5-hour', session, color, 0.95),
+      ...dailyWindows.map((window, index) => limitWindowNode(
+        window.label || (dailyWindows.length > 1 ? `Daily ${index + 1}` : 'Daily'),
+        window,
+        color,
+        0.78,
+        null,
+        window.detail || formatZcodeTokensDetail(window)
+      )),
+      weekly && limitWindowNode(weekly.label || 'Weekly', weekly, color, 0.68),
+      ...planBuckets.map((window) => limitWindowNode(
+        window.label || 'Start Plan',
+        window,
+        color,
+        0.68,
+        null,
+        window.detail || formatZcodeTokensDetail(window)
+      ))
+    ].filter(Boolean);
+    if (nodes.length % 2 === 1) nodes.at(-1).classList.add('limit-window-wide');
+    windows.append(...nodes);
+    // Monthly subscription buckets stay full width, independent of the
+    // paired quota count. Preserve all legacy billing windows without ids.
+    for (const monthly of monthlyWindows) {
+      const node = limitWindowNode(monthly.label || 'MCP', monthly, color, 0.68, null, monthly.detail || '');
+      node.classList.add('limit-window-wide');
+      windows.append(node);
     }
-    if (weekly) windows.append(limitWindowNode('Weekly', weekly, color, 0.68));
-    if (mcp) {
-      const mcpNode = limitWindowNode('MCP', mcp, color, 0.68);
-      mcpNode.classList.add('limit-window-wide');
-      windows.append(mcpNode);
+    // Balance sits at the bottom on its own full-width row: coding-plan quota
+    // is consumed before the cash pool, so the money line reads as the last
+    // resort.
+    if (balanceWindow) {
+      const balanceNode = limitWindowNode(
+        'Balance',
+        { remainingPercent: creditsMeterPercent(provider, balanceWindow) },
+        color,
+        0.95,
+        formatMoney(balanceWindow.remaining, balanceWindow.currency)
+      );
+      balanceNode.classList.add('limit-window-wide', 'limit-window-no-reset');
+      windows.append(balanceNode);
+      const spendNode = provider.balance && providerSpendNode(provider.balance);
+      if (spendNode) windows.append(spendNode);
     }
   } else if (provider.provider === 'volcengine') {
     const session = windowForKind(provider, 'session');
@@ -5255,6 +5537,25 @@ function renderProviderWindows(provider, color) {
       node.classList.add('limit-window-wide');
       windows.append(node);
     }
+  } else if (provider.provider === 'alibaba') {
+    // Team returns one credit pool; Personal/Solo returns rolling 5-hour and
+    // weekly windows. Both are the same provider, so the shape decides the
+    // layout rather than the configured variant — a device syncing another
+    // machine's row has no access to that setting.
+    const billing = windowForKind(provider, 'billing');
+    const session = windowForKind(provider, 'session');
+    const weekly = windowForKind(provider, 'weekly');
+    if (billing) {
+      const node = limitWindowNode(billing.label || 'Monthly', billing, color, 0.68);
+      node.classList.add('limit-window-wide');
+      windows.append(node);
+    }
+    if (session) {
+      const node = limitWindowNode(session.label || '5-hour', session, color, 0.95);
+      if (!weekly) node.classList.add('limit-window-wide');
+      windows.append(node);
+    }
+    if (weekly) windows.append(limitWindowNode(weekly.label || 'Weekly', weekly, color, 0.68));
   } else if (provider.provider === 'ollama') {
     const session = windowForKind(provider, 'session');
     const weekly = windowForKind(provider, 'weekly');
@@ -5377,9 +5678,19 @@ function positionCodexResetForecastTooltip(wrap) {
   tooltip.classList.toggle('is-below', roomAbove < tooltip.offsetHeight + 5);
 }
 
+function codexResetForecastType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  if (type !== 'banked' && type !== 'regular') return '';
+  return t(`limits.codexResetForecast.resetType.${type}`);
+}
+
 function codexResetForecastTooltip(forecast) {
   const entries = [];
   const disclaimer = t('limits.codexResetForecast.disclaimer');
+  const latestResetType = codexResetForecastType(forecast?.latestResetType);
+  if (latestResetType) {
+    entries.push([t('limits.codexResetForecast.resetType'), latestResetType]);
+  }
   const latestReset = codexResetForecastDate(forecast?.latestResetAt);
   if (latestReset) {
     const age = codexResetForecastAge(forecast.latestResetAt);
@@ -5565,6 +5876,7 @@ function renderLimitProviderRow(id, label, provider, color, options = {}) {
   if (options.accountRow) classes.push('limit-account-row');
   if (provider.stale) classes.push('stale');
   row.className = classes.join(' ');
+  row.dataset.limitMotionKey = limitResetMotionApi.providerKey(provider);
   row.append(
     renderLimitProviderHead(id, label, provider, color, options),
     renderProviderWindows(provider, color)
@@ -5879,6 +6191,84 @@ function renderVolcengineAccountGroup(label, providers, color) {
   });
 }
 
+function captureLimitResetMotion() {
+  const snapshot = new Map();
+  for (const row of els.limitsPanel?.querySelectorAll('.limit-row[data-limit-motion-key]') || []) {
+    for (const item of row.querySelectorAll('.limit-window[data-limit-motion-key]')) {
+      const key = `${row.dataset.limitMotionKey}\0${item.dataset.limitMotionKey}`;
+      const entry = {
+        remainingPercent: item.dataset.limitRemainingPercent,
+        displayPercent: item.dataset.limitDisplayPercent,
+        resetsAt: item.dataset.limitResetAt
+      };
+      // Ambiguous identities are safer left static than animated on the wrong row.
+      snapshot.set(key, snapshot.has(key) ? null : entry);
+    }
+  }
+  return snapshot;
+}
+
+function animateLimitResets(snapshot) {
+  if (!snapshot?.size || prefersReducedMotion()) return;
+  const motions = [];
+  for (const row of els.limitsPanel?.querySelectorAll('.limit-row[data-limit-motion-key]') || []) {
+    for (const item of row.querySelectorAll('.limit-window[data-limit-motion-key]')) {
+      const key = `${row.dataset.limitMotionKey}\0${item.dataset.limitMotionKey}`;
+      const previous = snapshot.get(key);
+      const current = {
+        remainingPercent: item.dataset.limitRemainingPercent,
+        displayPercent: item.dataset.limitDisplayPercent,
+        resetsAt: item.dataset.limitResetAt
+      };
+      if (!previous || !limitResetMotionApi.shouldAnimateReset(previous, current)) continue;
+      const from = Number(previous.displayPercent);
+      const to = Number(current.displayPercent);
+      const fill = item.querySelector('.limit-meter-fill');
+      if (
+        previous.displayPercent === ''
+        || current.displayPercent === ''
+        || !Number.isFinite(from)
+        || !Number.isFinite(to)
+        || !fill
+      ) continue;
+      const duration = limitResetMotionApi.durationMs(from, to);
+      motions.push({
+        fill,
+        from,
+        item,
+        to,
+        duration
+      });
+    }
+  }
+  if (!motions.length) return;
+  // Start only after the replacement DOM is paintable. The rest of the refresh render
+  // can delay this first frame; excluding that delay prevents the motion from visibly
+  // catching up by skipping its opening values.
+  requestAnimationFrame((startedAt) => {
+    if (prefersReducedMotion()) return;
+    for (const { fill, from, item, to, duration } of motions) {
+      if (!fill.isConnected || !item.isConnected) continue;
+      animateBarBetween(
+        fill,
+        from / 100,
+        to / 100,
+        0,
+        duration,
+        LIMIT_RESET_MOTION_EASING
+      );
+      animateLimitResetCompletion(fill, duration);
+      animateLimitResetPercent(
+        item.querySelector('[data-limit-motion-value]'),
+        from,
+        to,
+        duration,
+        startedAt
+      );
+    }
+  });
+}
+
 function renderLimits() {
   if (!els.limitsPanel) return;
   const holdLimitDetailTooltipRender = limitDetailTooltipShouldHoldRender();
@@ -5934,8 +6324,12 @@ function renderLimits() {
     state.limitPanelRenderSignature === renderSignature
     && els.limitsPanel.children.length === orderedProviders.length
   ) {
+    // View changes intentionally reuse the rendered Limits DOM. Replaying the
+    // entrance motion here keeps that cache from swallowing the normal bar fill.
+    animateCachedLimitBarsFromZero();
     return;
   }
+  const resetMotionSnapshot = captureLimitResetMotion();
   state.limitPanelRenderSignature = renderSignature;
   const nodes = [];
   const rows = orderedProviders;
@@ -5995,6 +6389,7 @@ function renderLimits() {
     nodes.push(renderLimitProviderRow(id, label, provider, thirdPartyVisual?.color || color, rowOptions));
   }
   els.limitsPanel.replaceChildren(...nodes);
+  animateLimitResets(resetMotionSnapshot);
 }
 
 function serviceStatusLabel(status) {
@@ -6415,13 +6810,14 @@ function isRendererWindowHidden() {
 function visibleStatsSurface() {
   return statsRenderSchedulerApi.visibleStatsSurface(
     isRendererWindowHidden(),
-    state.floatingBubble.collapsed,
-    isSettingsPanelOpen()
+    state.floatingBubble.collapsed
   );
 }
 
 function isSettingsSurfaceVisible() {
-  return visibleStatsSurface() === 'settings';
+  return !isRendererWindowHidden()
+    && !state.floatingBubble.collapsed
+    && isSettingsPanelOpen();
 }
 
 function serviceStatusSurfaceVisible() {
@@ -6480,14 +6876,15 @@ function openSettingsPanel() {
 
 function openViewFromTray(viewId) {
   if (!availableBreakdownIds().includes(viewId)) return;
-  const settingsWasOpen = isSettingsPanelOpen();
   if (state.viewSwitcherOpen) setViewSwitcherOpen(false);
   stopWindowShortcutRecording();
   resetSettingsListSearch();
   els.settingsPanel?.classList.add('hidden');
   els.shell.classList.remove('settings-open');
   state.openSession = null;
-  if (!renderBreakdownChange(viewId, { allowHidden: true }) && settingsWasOpen) render();
+  // Navigating to the view already on screen changes no breakdown, so it never
+  // repaints on its own — but the open session was just cleared above.
+  if (!renderBreakdownChange(viewId, { allowHidden: true })) render();
   ensureServiceStatusTicker();
 }
 
@@ -7788,6 +8185,7 @@ function render() {
   }
   if (!state.stats) return;
   els.toolDetailFooter.classList.add('hidden');
+  syncLiveTokenRateFooterState();
   renderSessionUsageArchiveStatus();
   ensureBreakdownVisible();
   renderViewSwitcher();
@@ -8006,7 +8404,9 @@ async function refreshStats(options = {}) {
     setRefreshButtonState('refreshing');
   }
   try {
-    state.stats = overlayAllTimeSessions(await window.tokenMonitor.getStats(options));
+    const nextStats = overlayAllTimeSessions(await window.tokenMonitor.getStats(options));
+    observeLiveTokenRate(nextStats);
+    state.stats = nextStats;
     if (options.forceHistory === true) {
       // A manual history rescan is an explicit retry boundary. Let Home request the
       // corresponding full payload even when its revision is unchanged, and restore
@@ -8184,6 +8584,7 @@ function applyAppearanceSettings(settings) {
   // omit it, so we must not wipe theme overrides mid-slider-drag.
   if (settings && 'themeColors' in settings) applyThemeColors(settings.themeColors);
   els.liveDot.style.display = (settings?.showLiveDot !== false) ? '' : 'none';
+  renderLiveTokenRate();
   els.shell.classList.toggle('desktop-mode', settings?.windowBehavior === 'desktop');
   els.shell.classList.toggle('title-icon-only', settings?.titleIconOnly === true);
   const trayMode = settings && 'trayMode' in settings
@@ -8610,12 +9011,8 @@ function applyFloatingBubbleState(payload = {}, options = {}) {
   }
   if (options.renderContent === false) return;
   if (wasCollapsed && !state.floatingBubble.collapsed) {
-    if (isSettingsPanelOpen()) {
-      syncSettingsForm();
-      renderConnectionStatus('settings');
-    } else {
-      renderStatsUpdate();
-    }
+    if (isSettingsPanelOpen()) syncSettingsForm();
+    renderStatsUpdate();
   } else {
     renderFloatingBubbleContent();
   }
@@ -8858,6 +9255,8 @@ function appearancePatchFromControls() {
     showToolIcons: Boolean(els.toolIconsInput.checked),
     titleIconOnly: Boolean(els.titleIconInput.checked),
     showCompactTotalTokens: Boolean(els.showCompactTotalTokensInput.checked),
+    showLiveTokenRate: Boolean(els.showLiveTokenRateInput.checked),
+    liveTokenRateScope: els.liveTokenRateScopeInput?.value === 'device' ? 'device' : 'all',
     compactTokenUnits: els.compactTokenUnitsInput?.value === 'localized' ? 'localized' : 'western',
     settingsInTitlebar: Boolean(els.swapSettingsRefreshInput.checked),
     glassOpacity: Number(els.glassInput.value === '' ? defaultAppearance.glassOpacity : els.glassInput.value),
@@ -9420,6 +9819,13 @@ function syncSettingsForm() {
   els.toolIconsInput.checked = state.settings.showToolIcons !== false;
   els.titleIconInput.checked = state.settings.titleIconOnly === true;
   els.showCompactTotalTokensInput.checked = state.settings.showCompactTotalTokens === true;
+  els.showLiveTokenRateInput.checked = state.settings.showLiveTokenRate === true;
+  if (els.liveTokenRateScopeInput) {
+    els.liveTokenRateScopeInput.value = state.settings.liveTokenRateScope === 'device' ? 'device' : 'all';
+  }
+  const liveRateHasScope = state.settings.showLiveTokenRate === true
+    && (state.settings.hubMode === 'client' || state.settings.hubMode === 'host');
+  els.liveTokenRateScopeRow?.classList.toggle('hidden', !liveRateHasScope);
   if (els.compactTokenUnitsInput) {
     els.compactTokenUnitsInput.value = state.settings.compactTokenUnits === 'localized' ? 'localized' : 'western';
   }
@@ -9475,6 +9881,7 @@ function syncSettingsForm() {
   renderExternalProviderStatus('commandcode');
   renderExternalProviderStatus('kimi');
   renderExternalProviderStatus('ollama');
+  renderExternalProviderStatus('alibaba');
   renderAntigravityStatus();
   renderMimoStatus();
   renderCopilotStatus();
@@ -11848,13 +12255,27 @@ async function onLimitProviderToggle() {
   if (checked.length === 0 && state.breakdown === 'limits') {
     setBreakdown('tool');
   }
-  await saveSettings({ limitProviders: checked.join(','), limitsEnabled: checked.length > 0 });
-  clearDisabledLimitProviderPendingChecks(new Set(checked));
-  // settings:update reconfigures LimitsRuntime immediately. Its existing
-  // snapshot and the newly enabled provider's eventual result arrive through
-  // the normal stats push, so a forced usage + all-provider refresh here only
-  // replaces stable account summaries with an interim snapshot and duplicates
-  // collection work.
+  const patch = { limitProviders: checked.join(','), limitsEnabled: checked.length > 0 };
+  // LimitsRuntime publishes its reconfigured snapshot synchronously before the
+  // main process can send settings:push. Keep the renderer on the user's new
+  // selection so that intervening stats frames cannot rebuild this checkbox
+  // from the previous settings and visibly re-check it.
+  const revision = ++state.limitProviderSelectionRevision;
+  state.pendingLimitProviderSelection = { revision, ...patch };
+  try {
+    await saveSettings(patch);
+    clearDisabledLimitProviderPendingChecks(new Set(checked));
+    // settings:update reconfigures LimitsRuntime immediately. Its existing
+    // snapshot and the newly enabled provider's eventual result arrive through
+    // the normal stats push, so a forced usage + all-provider refresh here only
+    // replaces stable account summaries with an interim snapshot and duplicates
+    // collection work.
+  } finally {
+    if (state.pendingLimitProviderSelection?.revision === revision) {
+      state.pendingLimitProviderSelection = null;
+      renderLimitProviderCheckboxes();
+    }
+  }
 }
 
 async function onLimitProviderMove(providerId, direction) {
@@ -12104,7 +12525,7 @@ async function saveSettings(patch) {
     try { state.settings = await window.tokenMonitor.getSettings(); } catch (_) {}
     applyEffectiveCurrencyRates();
     preserveSettingsPanelScroll(syncSettingsForm);
-    if (!isSettingsSurfaceVisible()) statsRenderScheduler.request();
+    if (isSettingsSurfaceVisible()) render(); else statsRenderScheduler.request();
     restartTimer();
     maybeUpdateBarsIcon();
     throw error;
@@ -12116,7 +12537,7 @@ async function saveSettings(patch) {
   // their accordion/switch layout transition.
   if (state.settingsPushRevision === settingsPushRevision) {
     preserveSettingsPanelScroll(syncSettingsForm);
-    if (!isSettingsSurfaceVisible()) statsRenderScheduler.request();
+    if (isSettingsSurfaceVisible()) render(); else statsRenderScheduler.request();
   }
   restartTimer();
   maybeUpdateBarsIcon();
@@ -12341,17 +12762,26 @@ els.breakdown.addEventListener('click', (event) => {
   });
 });
 
-els.pinButton.addEventListener('click', () => {
+els.pinButton.addEventListener('click', (event) => {
+  // Pointer focus would keep .window-actions:focus-within true after the cursor
+  // leaves, pinning the hover-only controls open. Keyboard activation keeps
+  // focus so the controls remain reachable without a pointer.
+  if (event.detail > 0) els.pinButton.blur();
   saveSettings({ windowBehavior: nextWindowBehavior(currentWindowBehavior()) });
 });
 els.settingsButton.addEventListener('click', (event) => {
   if (state.viewSwitcherOpen) setViewSwitcherOpen(false);
   els.settingsPanel.classList.toggle('hidden');
   const settingsOpen = isSettingsPanelOpen();
-  if (!settingsOpen) resetSettingsListSearch();
-  if (settingsOpen) syncSettingsForm();
-  else render();
-  if (!settingsOpen) stopWindowShortcutRecording();
+  // Settings is an overlay over a surface that keeps rendering behind it, so
+  // closing it needs no catch-up repaint. Only the panel's own DOM has to be
+  // caught up when it opens, because its renderers idle while it is closed.
+  if (settingsOpen) {
+    syncSettingsForm();
+  } else {
+    resetSettingsListSearch();
+    stopWindowShortcutRecording();
+  }
   els.shell.classList.toggle('settings-open', settingsOpen);
   if (!settingsOpen && event.detail > 0) els.settingsButton.blur();
   els.shell.style.transform = 'translateZ(0)';
@@ -12413,6 +12843,7 @@ els.appTitleMark?.addEventListener('click', suppressTokenRateClickAfterHold);
 els.liveDot?.addEventListener('click', suppressTokenRateClickAfterHold);
 els.appTitleMark?.addEventListener('click', toggleTokenRateMode);
 els.liveDot?.addEventListener('click', toggleTokenRateMode);
+els.liveTokenRate?.addEventListener('click', toggleTokenRateMode);
 
 els.languageInput?.addEventListener('change', async () => {
   await saveSettings({ language: els.languageInput.value });
@@ -12724,6 +13155,24 @@ els.titleIconInput.addEventListener('change', saveAppearanceFromControls);
 els.showCompactTotalTokensInput.addEventListener('change', async () => {
   await saveAppearanceFromControls();
 });
+els.showLiveTokenRateInput.addEventListener('change', async () => {
+  state.settings.showLiveTokenRate = els.showLiveTokenRateInput.checked;
+  const liveRateHasScope = state.settings.showLiveTokenRate
+    && (state.settings.hubMode === 'client' || state.settings.hubMode === 'host');
+  els.liveTokenRateScopeRow?.classList.toggle('hidden', !liveRateHasScope);
+  if (state.settings.showLiveTokenRate) observeLiveTokenRate(state.stats);
+  renderLiveTokenRate();
+  await saveAppearanceFromControls();
+  if (state.settings.showLiveTokenRate) observeLiveTokenRate(state.stats);
+  renderLiveTokenRate();
+});
+els.liveTokenRateScopeInput?.addEventListener('change', async () => {
+  state.settings.liveTokenRateScope = els.liveTokenRateScopeInput.value === 'device' ? 'device' : 'all';
+  resetLiveTokenRateTracking();
+  observeLiveTokenRate(state.stats);
+  renderLiveTokenRate();
+  await saveAppearanceFromControls();
+});
 els.compactTokenUnitsInput?.addEventListener('change', async () => {
   await saveAppearanceFromControls();
 });
@@ -12821,8 +13270,14 @@ els.refreshButton.addEventListener('click', () => {
   // on every one of them.
   else refreshStats({ force: true, forceHistory: true, forceSelfSync: true, feedback: true });
 });
-els.minButton.addEventListener('click', () => window.tokenMonitor.minimize());
-els.closeButton.addEventListener('click', () => window.tokenMonitor.close());
+els.minButton.addEventListener('click', (event) => {
+  if (event.detail > 0) els.minButton.blur();
+  window.tokenMonitor.minimize();
+});
+els.closeButton.addEventListener('click', (event) => {
+  if (event.detail > 0) els.closeButton.blur();
+  window.tokenMonitor.close();
+});
 els.trendsPanel.addEventListener('click', (event) => {
   if (event.target.closest('.trends-spark, .trends-open-hint')) window.tokenMonitor.openDashboard();
 });
@@ -12942,7 +13397,7 @@ window.tokenMonitor.onSettingsPush?.((next) => {
   state.settings = next;
   applyEffectiveCurrencyRates();
   preserveSettingsPanelScroll(syncSettingsForm);
-  if (!isSettingsSurfaceVisible()) statsRenderScheduler.request();
+  if (isSettingsSurfaceVisible()) render(); else statsRenderScheduler.request();
   maybeUpdateBarsIcon();
 });
 
@@ -12981,10 +13436,10 @@ window.tokenMonitor.onTokscalePush?.((payload) => {
 });
 
 function renderConnectionStatus(surface = visibleStatsSurface()) {
-  if (surface !== 'main' && surface !== 'settings') return;
+  if (surface !== 'main') return;
   setLiveDot(state.streamConnected);
   setStatus(statusTextFor(state.mode, state.streamConnected));
-  if (surface === 'settings') renderSyncClientStatus();
+  if (isSettingsSurfaceVisible()) renderSyncClientStatus();
 }
 window.tokenMonitor.onTraeStatusPush?.((payload) => {
   state.traeStatus = payload;
@@ -13010,20 +13465,14 @@ window.tokenMonitor.traeWorkStatus?.().then((status) => {
 function renderStatsUpdate() {
   const surface = visibleStatsSurface();
   renderConnectionStatus(surface);
-  if (surface === 'main') {
-    render();
-    return;
-  }
   if (surface === 'bubble') {
     renderFloatingBubbleContent();
     signalContentReady();
     return;
   }
-  if (surface !== 'settings') return;
-  // The total is visible below the open settings panel, so it repaints here
-  // too — render() runs on the main surface only, and without this the
-  // headline would go stale until the next interaction with the main view.
-  if (state.stats) renderMainTotal();
+  if (surface !== 'main') return;
+  render();
+  if (!isSettingsSurfaceVisible()) return;
   renderCodexAccounts();
   renderSettingsSummaries();
   renderLimitProviderCheckboxes();
@@ -13043,6 +13492,7 @@ function renderStatsUpdate() {
   renderExternalProviderStatus('commandcode');
   renderExternalProviderStatus('kimi');
   renderExternalProviderStatus('ollama');
+  renderExternalProviderStatus('alibaba');
   renderCopilotStatus();
   signalContentReady();
 }
@@ -13058,17 +13508,14 @@ function handleWindowVisibilityChange() {
   if (!isRendererWindowHidden() && state.settings?.hubMode === 'client' && hubBuildStatusRefreshDue()) {
     void refreshHubBuildStatus();
   }
-  if (isSettingsSurfaceVisible()) {
-    statsRenderScheduler.clear();
-    syncSettingsForm();
-    renderConnectionStatus('settings');
-    // syncSettingsForm() covers what the dropped catch-up render would have
-    // drawn, but it is not a stats render and never reaches signalContentReady().
-    // A window revealed straight into Settings must still report it has painted.
+  const settingsVisible = isSettingsSurfaceVisible();
+  if (settingsVisible || settingsDomSyncPending) syncSettingsForm();
+  statsRenderScheduler.flush();
+  if (settingsVisible) {
+    renderConnectionStatus();
+    // syncSettingsForm() is not a stats render, so a window revealed straight
+    // into Settings still needs to report that its visible content has painted.
     signalContentReady();
-  } else {
-    if (settingsDomSyncPending) syncSettingsForm();
-    statsRenderScheduler.flush();
   }
   ensureServiceStatusTicker();
 }
@@ -13095,6 +13542,7 @@ window.tokenMonitor.onStatsPush?.((payload) => {
     }
     if (payload.data?.mode) state.mode = payload.data.mode;
     state.stats = overlayAllTimeSessions(payload.data.stats);
+    observeLiveTokenRate(state.stats);
     applyCodexActiveAccountFromStats();
     // Progressive mid-tick pushes never carry a fresh history scan (see
     // AGENTS.md collector notes), so only the final push can retire the
@@ -15003,6 +15451,11 @@ const externalLimitAccountConfig = {
     configuredKey: 'ollamaCookieConfigured',
     sourceKey: 'ollamaCookieSource',
     pendingKey: 'ollamaPendingCheckSince'
+  },
+  alibaba: {
+    configuredKey: 'alibabaCookieConfigured',
+    sourceKey: 'alibabaCookieSource',
+    pendingKey: 'alibabaPendingCheckSince'
   }
 };
 
@@ -15091,7 +15544,10 @@ function copilotAccountStatusText(provider, configured, source, enabled = true) 
 function apiKeyAccountStatusText(providerName, provider, configured, source, enabled = true) {
   const accountStatus = limitProviderPresentationApi.apiKeyAccountStatus(provider, configured, enabled);
   if (accountStatus === 'linked') {
-    return t(source === 'env' ? `settings.${providerName}.statusEnv` : `settings.${providerName}.statusSet`);
+    // A ZCode-discovered login is an OAuth-style link, not a pasted API key,
+    // so it reads as connected the way Zed's linked sessions do.
+    const linkedKey = providerName === 'zai' && source === 'zcode-auto' ? 'settings.zai.statusLinked' : null;
+    return t(linkedKey || (source === 'env' ? `settings.${providerName}.statusEnv` : `settings.${providerName}.statusSet`));
   }
   if (accountStatus === 'invalid') return t(`settings.${providerName}.statusInvalid`);
   if (accountStatus === 'notConfigured') return t(`settings.${providerName}.statusNotSet`);
@@ -15175,6 +15631,58 @@ function ollamaPlatformUrl() {
   return 'https://ollama.com/settings';
 }
 
+const ALIBABA_DASHBOARD_URLS = {
+  cn: 'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/token-plan',
+  intl: 'https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=plan#/efm/subscription/token-plan',
+  'cn-personal': 'https://bailian.console.aliyun.com/cn-beijing?tab=plan#/efm/subscription/token-plan/personal',
+  'intl-personal': 'https://modelstudio.console.alibabacloud.com/ap-southeast-1/?tab=plan#/efm/subscription/token-plan/personal'
+};
+
+// Mirrors normalizeAlibabaCookieHeader's preprocessing in the main process:
+// surrounding quotes and a `Cookie:` prefix come off before the pair check, so
+// the two sides accept and reject exactly the same inputs.
+function alibabaCookieCandidate(value) {
+  let raw = String(value || '').trim();
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    raw = raw.slice(1, -1).trim();
+  }
+  return raw.replace(/^cookie\s*:\s*/i, '').trim();
+}
+
+function alibabaVariantOr(value) {
+  return ALIBABA_DASHBOARD_URLS[value] ? value : 'cn';
+}
+
+// What the user is looking at right now: the live select wins so the "Open
+// Token Plan" button and the request hint follow the dropdown before the
+// change has been saved.
+function alibabaSelectedVariant() {
+  const selected = document.getElementById('alibabaVariantInput')?.value;
+  return alibabaVariantOr(selected || state.settings?.alibabaVariant);
+}
+
+// What is stored. Used when re-rendering the form, so a settings reload can put
+// the select back rather than reading its own value and never changing.
+function alibabaSavedVariant() {
+  return alibabaVariantOr(state.settings?.alibabaVariant);
+}
+
+function alibabaPlatformUrl() {
+  return ALIBABA_DASHBOARD_URLS[alibabaSelectedVariant()];
+}
+
+// Personal/Solo quota comes from a different host than the dashboard, so the
+// cookie has to be copied from that request. Naming the right request is the
+// difference between a working paste and an `unauthorized` the user cannot
+// explain.
+function renderAlibabaVariantHints() {
+  const variant = alibabaSelectedVariant();
+  const personal = variant.endsWith('-personal');
+  const hint = document.getElementById('alibabaRequestHint');
+  if (hint) hint.textContent = personal ? '/tokenplan/personal/api/v2/usage' : 'GetSubscriptionSummary';
+  document.getElementById('alibabaPersonalNote')?.classList.toggle('hidden', !personal);
+}
+
 function commandcodePlatformUrl() {
   // Account-scoped in the address bar (/<username>/settings/usage), but this
   // path resolves to it and bounces through signin?returnTo= when signed out,
@@ -15227,12 +15735,29 @@ function renderExternalProviderStatus(providerName) {
     if (siteInput) siteInput.value = state.settings?.qoderSite === 'cn' ? 'cn' : 'global';
     updateQoderUsagePageHint();
   }
+  if (providerName === 'alibaba') {
+    const variantInput = document.getElementById('alibabaVariantInput');
+    if (variantInput) variantInput.value = alibabaSavedVariant();
+    renderAlibabaVariantHints();
+  }
   setCursorStatusText(
     statusEl,
     pending ? t('settings.common.checking') : apiKeyAccountStatusText(providerName, provider, configured, source, enabled)
   );
+  // A local ZCode install keeps the Z.ai row honest when unchecked: the
+  // auto-discovered plans still exist, so the pill shows auto-detect instead
+  // of the final "disabled" state the generic seven-state map lands on.
+  if (providerName === 'zai' && !enabled && state.settings?.zcodeLoginDetected === true) {
+    setCursorStatusText(statusEl, t('settings.limits.connection.autoDetect'));
+  }
   manualPanel.classList.toggle('hidden', linked);
   openBtn.classList.toggle('hidden', linked);
+  if (providerName === 'zai' && source === 'zcode-auto') {
+    // The discovered login is not user-entered, so the override input and the
+    // console link stay reachable instead of hiding behind linked.
+    manualPanel.classList.remove('hidden');
+    openBtn.classList.remove('hidden');
+  }
   const canClearConfiguredClaude = providerName === 'claude' && configured;
   logoutBtn.classList.toggle('hidden', source !== 'settings' || (!linked && !canClearConfiguredClaude));
   refreshBtn.classList.toggle('hidden', !configured);
@@ -17623,6 +18148,80 @@ function setupCursorAccountUI() {
     });
   }
 
+  const alibabaToggle = document.getElementById('alibabaSettingsToggle');
+  if (alibabaToggle) {
+    alibabaToggle.addEventListener('click', () => setExternalAccountExpanded('alibaba', !state.alibabaAccountExpanded));
+    setExternalAccountExpanded('alibaba', false);
+    renderExternalProviderStatus('alibaba');
+
+    const variantInput = document.getElementById('alibabaVariantInput');
+    if (variantInput) {
+      variantInput.value = alibabaSavedVariant();
+      variantInput.addEventListener('change', async () => {
+        renderAlibabaVariantHints();
+        // Switching console switches account: the stored cookie belongs to the
+        // console it was copied from and cannot authenticate the other one.
+        // Clearing it here is honest about that instead of leaving a saved
+        // credential that will only ever answer `unauthorized`.
+        await saveSettings({ alibabaVariant: variantInput.value || 'cn', alibabaCookie: '' });
+        clearExternalProviderCheckPending('alibaba');
+        clearExternalProviderPendingStatus('alibaba');
+        renderExternalProviderStatus('alibaba');
+        await refreshStats({ force: true });
+      });
+    }
+    renderAlibabaVariantHints();
+
+    document.getElementById('alibabaOpenBrowser').addEventListener('click', () => {
+      window.tokenMonitor.openExternal(alibabaPlatformUrl());
+    });
+    document.getElementById('alibabaLogoutButton').addEventListener('click', async () => {
+      await saveSettings({ alibabaCookie: '' });
+      clearExternalProviderCheckPending('alibaba');
+      clearExternalProviderPendingStatus('alibaba');
+      renderExternalProviderStatus('alibaba');
+      await refreshStats({ force: true });
+    });
+    document.getElementById('alibabaRefreshButton').addEventListener('click', async () => {
+      await refreshStats({ force: true });
+    });
+    document.getElementById('alibabaCookieSubmit').addEventListener('click', async () => {
+      const input = document.getElementById('alibabaCookieInput');
+      const errorEl = document.getElementById('alibabaErrorMessage');
+      errorEl.classList.add('hidden');
+      // The main process rejects a header with no name=value pair, so catching
+      // it here keeps a mis-paste from being reported back as "saved" while the
+      // stored value is silently empty.
+      // Same anchored rule as normalizeAlibabaCookieHeader in the main process.
+      // A looser test here lets a pasted URL pass, save as empty, and surface as
+      // "Not configured" instead of telling the user the paste was wrong.
+      if (!/(?:^|;\s*)[A-Za-z0-9!#$%&'*+\-.^_`|~]+=/.test(alibabaCookieCandidate(input.value))) {
+        errorEl.textContent = t('settings.alibaba.invalidCookie');
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      try {
+        markExternalProviderCheckPending('alibaba');
+        renderExternalProviderStatus('alibaba');
+        await saveSettings({
+          alibabaCookie: input.value,
+          alibabaVariant: alibabaSelectedVariant(),
+          limitProviders: limitProviderSelectionIncluding('alibaba'),
+          limitsEnabled: true
+        });
+        input.value = '';
+        renderExternalProviderStatus('alibaba');
+        await refreshStats({ force: true });
+        renderExternalProviderStatus('alibaba');
+      } catch (err) {
+        clearExternalProviderCheckPending('alibaba');
+        renderExternalProviderStatus('alibaba');
+        errorEl.textContent = t('settings.alibaba.saveFailed', { message: err.message });
+        errorEl.classList.remove('hidden');
+      }
+    });
+  }
+
   const ollamaToggle = document.getElementById('ollamaSettingsToggle');
   if (ollamaToggle) {
     ollamaToggle.addEventListener('click', () => setExternalAccountExpanded('ollama', !state.ollamaAccountExpanded));
@@ -18047,7 +18646,8 @@ function initSettingsAnimationWrappers() {
     '#zedManualPanel',
     '#commandcodeManualPanel',
     '#kimiManualPanel',
-    '#ollamaManualPanel'
+    '#ollamaManualPanel',
+    '#alibabaManualPanel'
   ].join(', ');
 
   document.querySelectorAll(selectors).forEach(el => {
