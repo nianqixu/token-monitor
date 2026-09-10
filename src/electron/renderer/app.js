@@ -82,6 +82,24 @@ const COLLECTION_LANE_CLIENTS = {
 };
 const isCollectionLaneClient = (clientId) => Boolean(COLLECTION_LANE_CLIENTS[clientId]);
 const collectionLaneClient = (clientId) => COLLECTION_LANE_CLIENTS[clientId] || null;
+// The Trae lanes' unclassified bucket is sub-agent input by construction
+// (history_v2 carries no cache fields), so wherever the unclassified tokens
+// provably come from a lane client the breakdown row says "sub-agent" instead
+// of the generic "unclassified".
+function unclassifiedRowLabel(clientKey, period) {
+  if (clientKey) {
+    return isCollectionLaneClient(clientKey)
+      ? t('dashboard.tooltip.traeSubagent')
+      : t('dashboard.tooltip.unclassified');
+  }
+  const holders = Object.entries(period?.clientUnclassifiedTokens || {})
+    .filter(([, tokens]) => (Number(tokens) || 0) > 0)
+    .map(([key]) => key);
+  if (holders.length > 0 && holders.every((key) => isCollectionLaneClient(key))) {
+    return t('dashboard.tooltip.traeSubagent');
+  }
+  return t('dashboard.tooltip.unclassified');
+}
 const LIMIT_PROVIDER_ACCOUNT_GROUP_IDS = {
   claude: 'claudeAccountGroup',
   codex: 'codexAccountGroup',
@@ -2075,7 +2093,7 @@ function renderToolDetailAccordion(accordionInner, detail) {
     cacheHit: t('dashboard.tooltip.inputCacheHit'),
     cacheMiss: t('dashboard.tooltip.inputCacheMiss'),
     output: t('dashboard.tooltip.output'),
-    unclassified: t('dashboard.tooltip.unclassified')
+    unclassified: detail.unclassifiedLabel || t('dashboard.tooltip.unclassified')
   };
   const tokenParts = hasTokenDetails
     ? fixedPeriodRangesApi.tokenComponentBreakdown({
@@ -2486,7 +2504,7 @@ function periodAttributionRows(period, values, costs) {
 
 function toolRowsForPeriod(period) {
   const clientRows = periodAttributionRows(period, period?.clients, period?.clientCosts)
-    .map(({ key: client, value, cost }) => ({ key: client, name: client === usageAttributionRowsApi.UNATTRIBUTED_KEY ? t('dashboard.tooltip.unclassified') : clientLabels[client] || client, value, cost, color: clientColors[client] || clientColors.default, stale: false, cacheReadTokens: attributionComponent(period, 'clientCacheReads', client), cacheWriteTokens: attributionComponent(period, 'clientCacheWrites', client), outputTokens: attributionComponent(period, 'clientOutputs', client), unclassifiedTokens: attributionComponent(period, 'clientUnclassifiedTokens', client), modelRows: toolDetailsApi.visibleModelRowsForTool(period, client, formatCost) }));
+    .map(({ key: client, value, cost }) => ({ key: client, name: client === usageAttributionRowsApi.UNATTRIBUTED_KEY ? t('dashboard.tooltip.unclassified') : clientLabels[client] || client, value, cost, color: clientColors[client] || clientColors.default, stale: false, cacheReadTokens: attributionComponent(period, 'clientCacheReads', client), cacheWriteTokens: attributionComponent(period, 'clientCacheWrites', client), outputTokens: attributionComponent(period, 'clientOutputs', client), unclassifiedTokens: attributionComponent(period, 'clientUnclassifiedTokens', client), unclassifiedLabel: unclassifiedRowLabel(client, period), modelRows: toolDetailsApi.visibleModelRowsForTool(period, client, formatCost) }));
   if (clientRows.length > 0) {
     const usageSortedRows = clientRows.sort((a, b) => b.value - a.value);
     return clientDisplayPreferencesApi.applyClientDisplayPreferences(usageSortedRows, state.settings?.clientDisplayOrder, state.settings?.hiddenClients, KNOWN_CLIENTS, state.settings?.pinnedClients);
@@ -2507,7 +2525,8 @@ function modelRowsForPeriod(period, rankingMetric = state.settings?.modelRanking
     cacheReadTokens: attributionComponent(period, 'modelCacheReads', model),
     cacheWriteTokens: attributionComponent(period, 'modelCacheWrites', model),
     outputTokens: attributionComponent(period, 'modelOutputs', model),
-    unclassifiedTokens: attributionComponent(period, 'modelUnclassifiedTokens', model)
+    unclassifiedTokens: attributionComponent(period, 'modelUnclassifiedTokens', model),
+    unclassifiedLabel: unclassifiedRowLabel(null, period)
   }));
   if (modelRows.length > 0) {
     return usageAttributionRowsApi.rankRowsWithValues(modelRows, rankingMetric);
