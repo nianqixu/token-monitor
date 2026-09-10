@@ -27,3 +27,4 @@ devlog/
 # Local tool state (security-scan history, IDE scratch)
 .mimosa/
 .trae/
+dist-054/
