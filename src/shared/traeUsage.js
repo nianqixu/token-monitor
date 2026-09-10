@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { extractUsageFromTokscale, mergePeriods } = require('./usage');
-const { hasSummaryPeriod } = require('./archivePeriods');
+const { hasSummaryPeriod } = require('./archiveHelpers');
 const { mergeHistories, normalizeHistory, parseGraphResult } = require('./history');
 
 const TRAE_CLIENT = 'trae';
