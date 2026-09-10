@@ -36,6 +36,7 @@ const INPUT_TOKEN_KEYS = ['input', 'inputTokens', 'input_tokens', 'promptTokens'
 const OUTPUT_TOKEN_KEYS = ['output', 'outputTokens', 'output_tokens', 'completionTokens', 'completion_tokens', 'totalOutput'];
 const CACHE_READ_TOKEN_KEYS = ['cacheRead', 'cacheReadTokens', 'cache_read_tokens', 'cachedTokens', 'cached_tokens', 'cacheReadInputTokens', 'totalCacheRead'];
 const CACHE_WRITE_TOKEN_KEYS = ['cacheWrite', 'cacheWriteTokens', 'cache_write_tokens', 'cacheCreationInputTokens', 'totalCacheWrite'];
+const UNCLASSIFIED_TOKEN_KEYS = ['unclassified', 'unclassifiedTokens', 'unclassified_tokens'];
 const REASONING_TOKEN_KEYS = ['reasoning', 'reasoningTokens', 'reasoning_tokens'];
 // Read off tokscale's per-entry `performance` block. `msPer1KTokens` is deliberately ignored:
 // it is a pre-divided ratio, and only raw sums survive being added across rows and devices.
@@ -170,9 +171,26 @@ function emptyPeriod() {
   };
 }
 
+// Runs on the key of every client/model/session map during extraction, ingest
+// and aggregation, but the distinct raw ids number in the dozens while rows can
+// number in the thousands per scan. Memoizing on the post-alias raw id turns
+// the repeated substring scan into a hash lookup; the bound keeps adversarial
+// id streams from growing the cache without limit.
+const CLIENT_NAME_MEMO_LIMIT = 4096;
+const clientNameMemo = new Map();
+
 function normalizeClientName(value) {
   const raw = normalizeTokscaleClientName(value);
   if (!raw) return null;
+  const memoized = clientNameMemo.get(raw);
+  if (memoized !== undefined) return memoized;
+  const name = normalizeClientNameUncached(raw);
+  if (clientNameMemo.size >= CLIENT_NAME_MEMO_LIMIT) clientNameMemo.clear();
+  clientNameMemo.set(raw, name);
+  return name;
+}
+
+function normalizeClientNameUncached(raw) {
   if (raw.includes('claude')) return 'claude';
   if (raw.includes('codex')) return 'codex';
   if (raw.includes('hermes')) return 'hermes';
@@ -494,8 +512,7 @@ function addSession(period, session) {
   mergeSession(period.sessions[key], session);
 }
 
-function sessionFromRow(row) {
-  const client = detectClient(row);
+function sessionFromRow(row, client = detectClient(row)) {
   if (!client || client === REASONIX_CLIENT || isReasonixSyntheticSession(row)) return null;
   const id = detectSessionId(row);
   if (!id) return null;
@@ -716,27 +733,52 @@ function normalizePeriod(input, options = {}) {
 const UNATTRIBUTED_USAGE_CLIENT = '__unattributed';
 
 
-function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
-  const client = detectedClient;
-  const tokens = tokenValueForClient(row, client);
-  const cost = costValue(row);
-  const cacheRead = Math.max(0, Math.round(firstNumber(row, CACHE_READ_TOKEN_KEYS)));
-  const cacheWrite = Math.max(0, Math.round(firstNumber(row, CACHE_WRITE_TOKEN_KEYS)));
-  const output = Math.max(0, Math.round(outputValueForClient(row, client)));
+// Derive everything one row contributes — totals, attribution, model split,
+// session detail — exactly once. The bundle path adds each row into the public
+// aggregate and its per-client partition, and deriving per copy would run
+// tokenValueForClient, detectModel and sessionFromRow twice per row on the
+// scan path.
+function usageRowStats(row, client) {
   const performance = row?.performance && typeof row.performance === 'object' ? row.performance : null;
-  const timedTokens = Math.max(0, Math.round(firstNumber(performance, TIMED_TOKEN_KEYS)));
-  const timedDurationMs = Math.max(0, Math.round(firstNumber(performance, TIMED_DURATION_KEYS)));
+  return {
+    tokens: tokenValueForClient(row, client),
+    cost: costValue(row),
+    cacheRead: Math.max(0, Math.round(firstNumber(row, CACHE_READ_TOKEN_KEYS))),
+    cacheWrite: Math.max(0, Math.round(firstNumber(row, CACHE_WRITE_TOKEN_KEYS))),
+    output: Math.max(0, Math.round(outputValueForClient(row, client))),
+    // Tokens the producer counted but explicitly could not classify into the
+    // cache/output split (Trae sub-agent calls carry no cache fields). Rows
+    // that never set the key contribute 0, so this stays a no-op everywhere
+    // else.
+    unclassified: Math.max(0, Math.round(firstNumber(row, UNCLASSIFIED_TOKEN_KEYS))),
+    timedTokens: Math.max(0, Math.round(firstNumber(performance, TIMED_TOKEN_KEYS))),
+    timedDurationMs: Math.max(0, Math.round(firstNumber(performance, TIMED_DURATION_KEYS))),
+    model: detectModel(row, client),
+    session: sessionFromRow(row, client)
+  };
+}
+
+function addUsageRowStatsToPeriod(period, client, stats) {
+  const tokens = stats.tokens;
+  const cost = stats.cost;
+  const cacheRead = stats.cacheRead;
+  const cacheWrite = stats.cacheWrite;
+  const output = stats.output;
+  const unclassified = stats.unclassified;
+  const timedTokens = stats.timedTokens;
+  const timedDurationMs = stats.timedDurationMs;
   // A row contributes its output to the throughput numerator exactly when it contributes to
   // the denominator. Gating rather than scaling by tokscale's `tokenCoverage` keeps this a
   // plain counter, which is what lets it merge and delta like every other token field.
   const timedOutputTokens = timedDurationMs > 0 ? output : 0;
-  let model = detectModel(row, client);
+  let model = stats.model;
   if (client === 'cursor' && model === 'auto') model = 'cursor-auto';
   period.totalTokens += Math.max(0, Math.round(tokens));
   period.costUsd += cost;
   period.cacheReadTokens += cacheRead;
   period.cacheWriteTokens += cacheWrite;
   period.outputTokens += output;
+  period.unclassifiedTokens += unclassified;
   period.timedTokens += timedTokens;
   period.timedOutputTokens += timedOutputTokens;
   period.timedDurationMs += timedDurationMs;
@@ -745,6 +787,7 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
     if (cacheRead > 0) period.clientCacheReads[client] = (period.clientCacheReads[client] || 0) + cacheRead;
     if (cacheWrite > 0) period.clientCacheWrites[client] = (period.clientCacheWrites[client] || 0) + cacheWrite;
     if (output > 0) period.clientOutputs[client] = (period.clientOutputs[client] || 0) + output;
+    if (unclassified > 0) period.clientUnclassifiedTokens[client] = (period.clientUnclassifiedTokens[client] || 0) + unclassified;
   }
   if (client && cost > 0) period.clientCosts[client] = (period.clientCosts[client] || 0) + cost;
   if (model && tokens > 0) {
@@ -752,6 +795,7 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
     if (cacheRead > 0) period.modelCacheReads[model] = (period.modelCacheReads[model] || 0) + cacheRead;
     if (cacheWrite > 0) period.modelCacheWrites[model] = (period.modelCacheWrites[model] || 0) + cacheWrite;
     if (output > 0) period.modelOutputs[model] = (period.modelOutputs[model] || 0) + output;
+    if (unclassified > 0) period.modelUnclassifiedTokens[model] = (period.modelUnclassifiedTokens[model] || 0) + unclassified;
   }
   if (model && cost > 0) period.modelCosts[model] = (period.modelCosts[model] || 0) + cost;
   if (client && model && tokens > 0) {
@@ -762,8 +806,7 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
     if (!period.clientModelCosts[client]) period.clientModelCosts[client] = {};
     period.clientModelCosts[client][model] = (period.clientModelCosts[client][model] || 0) + cost;
   }
-  const session = sessionFromRow(row);
-  if (session) addSession(period, session);
+  if (stats.session) addSession(period, stats.session);
 }
 
 function fallbackUsagePeriod(json) {
@@ -798,8 +841,9 @@ function extractUsageBundleFromTokscale(json) {
     const client = detectClient(row);
     const partitionKey = client || UNATTRIBUTED_USAGE_CLIENT;
     if (!byClient[partitionKey]) byClient[partitionKey] = emptyPeriod();
-    addUsageRowToPeriod(period, row, client);
-    addUsageRowToPeriod(byClient[partitionKey], row, client);
+    const stats = usageRowStats(row, client);
+    addUsageRowStatsToPeriod(period, client, stats);
+    addUsageRowStatsToPeriod(byClient[partitionKey], client, stats);
   }
   return { period, byClient };
 }
@@ -809,7 +853,10 @@ function extractUsageFromTokscale(json) {
   collectUsageRows(json, rows);
   if (rows.length === 0 && json && typeof json === 'object') return fallbackUsagePeriod(json);
   const period = emptyPeriod();
-  for (const row of rows) addUsageRowToPeriod(period, row);
+  for (const row of rows) {
+    const client = detectClient(row);
+    addUsageRowStatsToPeriod(period, client, usageRowStats(row, client));
+  }
   return period;
 }
 
@@ -831,7 +878,12 @@ function normalizeDeviceOsName(value) {
   return String(value || '').trim().slice(0, 64);
 }
 
-function normalizeDeviceRecord(record) {
+// Everything on a normalized record except the period bodies (which stay {}).
+// aggregateHistory reads only history, periodWindows and the record date, so it
+// takes this core directly instead of rebuilding every client/model/session/
+// project map per device per read; isPeriodExpired() likewise touches only
+// periodWindows and updatedAt/receivedAt, both normalized here.
+function normalizeDeviceRecordCore(record) {
   const nowIso = new Date().toISOString();
   const normalized = {
     deviceId: String(record.deviceId || record.id || 'unknown'),
@@ -879,6 +931,11 @@ function normalizeDeviceRecord(record) {
     const windows = normalizePeriodWindows(record.periodWindows);
     if (windows) normalized.periodWindows = windows;
   }
+  return normalized;
+}
+
+function normalizeDeviceRecord(record) {
+  const normalized = normalizeDeviceRecordCore(record);
   for (const periodName of PERIODS) {
     normalized.periods[periodName] = normalizePeriod(record[periodName] || record.periods?.[periodName], {
       projectsEnabled: normalized.projectsEnabled !== false
@@ -1202,7 +1259,10 @@ function aggregateHistory(devices, options = {}) {
   const histories = [];
   let reportedToday = '';
   for (const record of devices) {
-    const normalized = normalizeDeviceRecord(record);
+    // Core-only: everything read below (history presence, the daily tier,
+    // periodWindows.today.key, and isPeriodExpired's periodWindows/date reads)
+    // is normalized without rebuilding the period trees.
+    const normalized = normalizeDeviceRecordCore(record);
     if (!hasOwn(normalized, 'history') || normalized.history === null) continue;
     histories.push(normalized.history);
     if (!normalized.history.daily.length) continue;
@@ -1352,7 +1412,11 @@ function aggregateDevices(devices, staleAfterMs, nowMs = Date.now()) {
     }
     for (const periodName of PERIODS) {
       if (isPeriodExpired(normalized, periodName, now)) continue;
-      addPeriodInto(aggregate.periods[periodName], normalizePeriod(normalized.periods[periodName]));
+      // normalizeDeviceRecord produced this period above; normalizePeriod here
+      // would rebuild every client/model/session/project map a second time on
+      // each stats read. addPeriodInto only reads its source, so the
+      // already-normalized period can be summed as-is.
+      addPeriodInto(aggregate.periods[periodName], normalized.periods[periodName]);
     }
   }
   aggregate.limits = aggregateLimits(aggregate.devices, staleAfterMs, now);

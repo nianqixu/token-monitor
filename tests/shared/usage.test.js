@@ -1234,3 +1234,28 @@ test('aggregateDevices falls back to UTC-day compare for old agents without peri
   }], 10 * 60 * 1000, Date.parse('2026-06-26T06:00:00.000Z'));
   assert.equal(kept.periods.today.totalTokens, 7);
 });
+
+test('extractUsageFromTokscale routes an explicit row unclassified bucket out of the cache split', () => {
+  // Trae sub-agent entries: totalTokens explicit, no cache fields, input side
+  // declared unclassified. Rows without the key (every other client) are
+  // unaffected and keep closing over their own totals.
+  const period = extractUsageFromTokscale({
+    entries: [
+      {
+        client: 'trae', sessionId: 's1', model: 'kimi-k2.5', provider: 'trae',
+        totalTokens: 1000, input: 0, output: 300, cacheRead: 0, cacheWrite: 0, unclassified: 700
+      },
+      {
+        client: 'claude', sessionId: 's2', model: 'sonnet', provider: 'claude',
+        input: 100, output: 10, cacheRead: 50, cacheWrite: 5
+      }
+    ]
+  });
+  assert.equal(period.totalTokens, 1165);
+  assert.equal(period.unclassifiedTokens, 700);
+  assert.equal(period.cacheReadTokens, 50);
+  assert.equal(period.cacheWriteTokens, 5);
+  assert.equal(period.outputTokens, 310);
+  assert.equal(period.clientUnclassifiedTokens.trae, 700);
+  assert.equal(period.modelUnclassifiedTokens['kimi-k2.5'], 700);
+});

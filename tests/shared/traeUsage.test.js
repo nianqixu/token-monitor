@@ -9,6 +9,7 @@ const { createCipheriv, createHmac, pbkdf2Sync, randomBytes } = require('node:cr
 
 const {
   TRAE_CLIENT,
+  TRAE_SOURCES,
   applyTraeCollectionHistory,
   applyTraeCollectionUsage,
   buildTraeHistoryGraph,
@@ -18,6 +19,7 @@ const {
   localDayKeyOf,
   localMonthKeyOf,
   mergeTraeRows,
+  normalizeTraeHistoryRow,
   normalizeTraeTurnRow,
   readTraeRows,
   traeDataPaths,
@@ -171,6 +173,95 @@ test('normalizeTraeTurnRow maps the context envelope and clamps cache components
   assert.equal(normalizeTraeTurnRow({ context: JSON.stringify({ token_usage: { prompt_tokens: 0, completion_tokens: 0 } }) }), null);
 });
 
+test('normalizeTraeHistoryRow maps a sub-agent history_v2 call to the usage-row shape', () => {
+  const row = normalizeTraeHistoryRow({
+    rowid: 42,
+    session_id: 's1',
+    created_at: 1750000000,
+    token_usage: 1000,
+    messages: JSON.stringify({
+      raw_messages: [
+        { role: 'tool', extra_info: { input_token: 300 } },
+        { role: 'assistant', extra_info: { model: 'glm-5.2', model_name: 'glm-5.2__dev', input_token: 400 } }
+      ],
+      mode: 'agent'
+    }),
+    project_label: 'demo'
+  });
+  assert.deepEqual(row, {
+    sessionId: 'trae:cn:s1',
+    // The hv2 discriminator keeps a history_v2 id from colliding with a
+    // chat_turn rowid sharing the same session in the mergeTraeRows map.
+    messageId: 'trae:cn:s1:hv2:42',
+    model: 'glm-5.2',
+    projectLabel: 'demo',
+    // Sub-agent input is unclassified, never input: history_v2 has no cache
+    // fields, and an unknown split must not render as cache miss.
+    input: 0,
+    output: 300,
+    unclassified: 700,
+    cacheRead: 0,
+    cacheWrite: 0,
+    createdAt: 1750000000000,
+    messages: 1
+  });
+
+  // input_token beyond the total clamps; a missing model falls back to 'trae';
+  // zero-total and malformed rows drop out entirely.
+  const clamped = normalizeTraeHistoryRow({
+    rowid: 43,
+    session_id: 's2',
+    created_at: null,
+    token_usage: 100,
+    messages: JSON.stringify({ raw_messages: [{ role: 'assistant', extra_info: { input_token: 500 } }] })
+  });
+  assert.equal(clamped.unclassified, 100);
+  assert.equal(clamped.output, 0);
+  assert.equal(clamped.model, 'trae');
+  assert.equal(normalizeTraeHistoryRow({ token_usage: 5, messages: 'not json' }), null);
+  assert.equal(normalizeTraeHistoryRow({ token_usage: 0, messages: '{"raw_messages":[]}' }), null);
+});
+
+test('sub-agent tokens land in unclassified and stay out of the cache split', () => {
+  const mainTurn = {
+    sessionId: 'trae:cn:s1', messageId: 'm1', model: 'kimi-k2.5', projectLabel: 'demo',
+    input: 100, output: 10, cacheRead: 50, cacheWrite: 5, createdAt: Date.now() - 1000, messages: 1
+  };
+  const subCall = normalizeTraeHistoryRow({
+    rowid: 42,
+    session_id: 's1',
+    created_at: Math.floor((Date.now() - 1000) / 1000),
+    token_usage: 1000,
+    messages: JSON.stringify({
+      raw_messages: [{ role: 'assistant', extra_info: { model: 'kimi-k2.5', input_token: 700 } }]
+    })
+  });
+  const periods = buildTraePeriodsNormalized({ rows: [mainTurn, subCall] });
+  const today = periods.today;
+  // Total keeps counting the sub-agent call...
+  assert.equal(today.totalTokens, 100 + 10 + 50 + 5 + 1000);
+  assert.equal(today.models['kimi-k2.5'], 100 + 10 + 50 + 5 + 1000);
+  // ...but its input side is unclassified, not cache miss, and the main
+  // agent's cache split passes through untouched.
+  assert.equal(today.unclassifiedTokens, 700);
+  assert.equal(today.clientUnclassifiedTokens[TRAE_CLIENT], 700);
+  assert.equal(today.modelUnclassifiedTokens['kimi-k2.5'], 700);
+  assert.equal(today.cacheReadTokens, 50);
+  assert.equal(today.cacheWriteTokens, 5);
+  assert.equal(today.outputTokens, 10 + 300);
+  // Closure: after components + unclassified, what remains is the main
+  // agent's non-cache input — a genuine cache miss, not sub-agent noise.
+  assert.equal(today.cacheReadTokens + today.cacheWriteTokens + today.outputTokens + today.unclassifiedTokens, 1065);
+  assert.equal(today.totalTokens - 1065, 100);
+
+  const graph = buildTraeHistoryGraph({ rows: [mainTurn, subCall] });
+  const entry = graph.contributions[0].clients.find((client) => client.modelId === 'kimi-k2.5');
+  assert.equal(entry.tokens.unclassified, 700);
+  assert.equal(entry.unclassifiedTokens, 700);
+  assert.equal(entry.tokens.input, 100);
+  assert.equal(entry.tokens.cacheRead, 50);
+});
+
 test('traeDataPaths resolves the Trae CN database location and env override', () => {
   const windows = traeDataPaths({
     platform: 'win32',
@@ -301,6 +392,68 @@ test('applyTraeCollectionHistory merges trae contributions into an existing hist
     const beyond = readTraeRows(dbPath, { sinceId: 300 });
     assert.equal(beyond.rows.length, 0);
     assert.equal(beyond.maxId, 3);
+    // No agent_run/history_v2 in this fixture: sub-agent collection degrades to
+    // the chat_turn-only pipeline instead of failing the read.
+    assert.equal(beyond.historyMaxId, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+(sqlite ? test : test.skip)('readTraeRows merges sub-agent history_v2 rows and excludes soft-deleted ones', () => {
+  const dir = writeTempDir();
+  try {
+    const dbPath = path.join(dir, 'plain.db');
+    const database = new sqlite.DatabaseSync(dbPath);
+    database.exec(`
+      CREATE TABLE chat_turn (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, created_at INTEGER, context TEXT);
+      CREATE TABLE agent_run (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_run_id TEXT, parent_run_id TEXT, session_id TEXT);
+      CREATE TABLE history_v2 (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, created_at INTEGER, messages TEXT, token_usage INTEGER, agent_run_id TEXT, deleted_at INTEGER);
+      INSERT INTO chat_turn (session_id, created_at, context) VALUES ('s1', 1750000000, '{"token_usage":{"prompt_tokens":100,"completion_tokens":10,"cache_read_input_tokens":40},"persist_user_message_context":{"model_info":{"config_name":"glm-5.1"}}}');
+      INSERT INTO agent_run (agent_run_id, parent_run_id, session_id) VALUES ('top-run', NULL, 's1');
+      INSERT INTO agent_run (agent_run_id, parent_run_id, session_id) VALUES ('sub-run', 'top-run', 's1');
+      INSERT INTO agent_run (agent_run_id, parent_run_id, session_id) VALUES ('orphan-run', '', 's1');
+      -- sub-agent call: counted
+      INSERT INTO history_v2 (session_id, created_at, messages, token_usage, agent_run_id, deleted_at) VALUES ('s1', 1750000050, '{"raw_messages":[{"role":"assistant","extra_info":{"model":"mimo-v2.5","input_token":60}}]}', 100, 'sub-run', 0);
+      -- top-run call: NOT counted (top turns come from chat_turn, never double-counted)
+      INSERT INTO history_v2 (session_id, created_at, messages, token_usage, agent_run_id, deleted_at) VALUES ('s1', 1750000060, '{"raw_messages":[{"role":"assistant","extra_info":{"model":"mimo-v2.5","input_token":10}}]}', 20, 'top-run', 0);
+      -- empty parent_run_id is a top-level run, not a sub-agent
+      INSERT INTO history_v2 (session_id, created_at, messages, token_usage, agent_run_id, deleted_at) VALUES ('s1', 1750000070, '{"raw_messages":[{"role":"assistant","extra_info":{"model":"mimo-v2.5","input_token":5}}]}', 9, 'orphan-run', 0);
+      -- soft-deleted sub-agent call: excluded from rows but still raises the cursor
+      INSERT INTO history_v2 (session_id, created_at, messages, token_usage, agent_run_id, deleted_at) VALUES ('s1', 1750000080, '{"raw_messages":[{"role":"assistant","extra_info":{"model":"mimo-v2.5","input_token":1}}]}', 5, 'sub-run', 1750000999);
+    `);
+    database.close();
+
+    const { rows, maxId, historyMaxId } = readTraeRows(dbPath, { source: TRAE_SOURCES.trae });
+    // 1 chat_turn + 1 sub-agent history_v2 row.
+    assert.equal(rows.length, 2);
+    assert.equal(maxId, 1);
+    // The whole-table MAX(id) includes the soft-deleted row (id 4).
+    assert.equal(historyMaxId, 4);
+    const turn = rows.find((row) => !row.messageId.includes(':hv2:'));
+    const sub = rows.find((row) => row.messageId.includes(':hv2:'));
+    assert.equal(turn.cacheRead, 40, 'main-agent cache split survives');
+    assert.equal(sub.sessionId, 'trae:cn:s1');
+    assert.equal(sub.messageId, 'trae:cn:s1:hv2:1');
+    assert.equal(sub.model, 'mimo-v2.5');
+    assert.equal(sub.input, 0);
+    assert.equal(sub.unclassified, 60);
+    assert.equal(sub.output, 40);
+    assert.equal(sub.cacheRead, 0);
+    // Independent cursors: sinceHistoryId prunes history_v2 only, chat_turn
+    // stays. The 256-row overlap rewind still re-reads the whole small table,
+    // which is the point — re-read rows refresh in place by messageId.
+    const incremental = readTraeRows(dbPath, { source: TRAE_SOURCES.trae, sinceId: 1, sinceHistoryId: 4 });
+    assert.equal(incremental.rows.length, 2, 'overlap rewind re-reads both sources');
+    assert.equal(incremental.historyMaxId, 4);
+    // Past the rewind window the history side drops out entirely.
+    const beyond = readTraeRows(dbPath, { source: TRAE_SOURCES.trae, sinceId: 1, sinceHistoryId: 300 });
+    assert.equal(beyond.rows.length, 1, 'only the chat_turn row remains');
+    assert.equal(beyond.historyMaxId, 4);
+    // A source without subUsageTable never touches the sub tables.
+    const mainOnly = readTraeRows(dbPath, { source: { ...TRAE_SOURCES.trae, subUsageTable: null } });
+    assert.equal(mainOnly.rows.length, 1);
+    assert.equal(mainOnly.historyMaxId, null);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -375,6 +528,44 @@ test('collectTraeSnapshot decrypts, reads, and removes the decrypted file', () =
     assert.equal(seenSinceId, 7, 'collectTraeSnapshot forwards sinceId to the reader');
     assert.equal(fs.existsSync(capturedOutputPath), false,
       'the decrypted database must be removed after the read');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('collectTraeSnapshot forwards sinceHistoryId and returns historyMaxId', () => {
+  const dir = writeTempDir();
+  try {
+    const key = randomBytes(32);
+    const salt = randomBytes(16);
+    const plain = Buffer.alloc(PAGE, 0x51);
+    const dbPath = path.join(dir, 'database.db');
+    fs.writeFileSync(dbPath, encryptPage(plain, 1, key, salt));
+
+    const seen = {};
+    const result = collectTraeSnapshot({
+      dbPath,
+      encKey: key.toString('hex'),
+      workDir: dir,
+      sinceId: 7,
+      sinceHistoryId: 99,
+      source: TRAE_SOURCES.trae,
+      decryptDb: ({ outputPath }) => {
+        decryptTraeDb({ dbPath, encKey: key.toString('hex'), outputPath });
+        return { pages: 1, bytes: PAGE };
+      },
+      readRows: (p, opts) => {
+        seen.sinceId = opts.sinceId;
+        seen.sinceHistoryId = opts.sinceHistoryId;
+        seen.source = opts.source;
+        return { rows: [], maxId: 42, historyMaxId: 120 };
+      }
+    });
+    assert.equal(seen.sinceId, 7);
+    assert.equal(seen.sinceHistoryId, 99, 'the history cursor must reach the reader too');
+    assert.equal(seen.source, TRAE_SOURCES.trae);
+    assert.equal(result.maxId, 42);
+    assert.equal(result.historyMaxId, 120);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

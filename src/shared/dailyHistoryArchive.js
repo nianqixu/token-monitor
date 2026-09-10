@@ -45,9 +45,13 @@ function normalizeObservation(value) {
   // A zero-token synthetic observation has an exact zero component breakdown
   // even when it predates the provenance field. Do not let bookkeeping-only
   // rows make an otherwise exact fixed-range breakdown unavailable.
+  // A producer that explicitly declares its unclassified bucket (Trae
+  // sub-agent calls carry tokens with no cache fields by design) keeps its
+  // component split too: cache hit rate simply computes over the classified
+  // remainder, so "counted but not classifiable" must not strip cacheRead.
   const tokenComponentsAvailable = componentsFit
     && componentTokens + unclassifiedTokens <= tokens
-    && unclassifiedTokens === 0
+    && (unclassifiedTokens === 0 || hasExplicitUnclassified)
     && (tokens === 0 || value.tokenComponentsAvailable === true);
   if (tokens === 0 && cost === 0 && messages === 0) return null;
   return {

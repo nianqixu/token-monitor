@@ -51,6 +51,9 @@ function sumTokens(breakdown, client = '') {
   if (!breakdown || typeof breakdown !== 'object') return 0;
   return num(breakdown.input) + num(breakdown.output)
     + num(breakdown.cacheRead) + num(breakdown.cacheWrite)
+    // Trae sub-agent rows report their input as `unclassified` (no cache data,
+    // must not render as cache miss); the tokens still count toward the day.
+    + num(breakdown.unclassified)
     + (hasDisjointReasoning(client) ? num(breakdown.reasoning) : 0);
 }
 
@@ -140,7 +143,11 @@ function parseGraphResult(raw) {
       outputTokens += output;
       unclassifiedTokens += unclassified;
       tokenComponentsAvailable = tokenComponentsAvailable
-        && (t === 0 || (componentsAvailable && unclassified === 0));
+        // An explicit `unclassifiedTokens` declaration keeps the entry exact:
+        // the producer counted those tokens but has no cache fields for them
+        // (Trae sub-agent calls), so the hit rate just computes over the
+        // classified remainder instead of the split being unavailable.
+        && (t === 0 || (componentsAvailable && (unclassified === 0 || hasExplicitUnclassified)));
       const pc = perClient[client] || (perClient[client] = {
         tokens: 0, cost: 0, messages: 0, unclassifiedTokens: 0
       });

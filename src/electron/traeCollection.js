@@ -31,7 +31,8 @@ const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
 const TRAE_LIVE_INTERVAL_MS = 2 * 60 * 1000;
 const TRAE_SMART_INTERVAL_MS = 10 * 60 * 1000;
 // Watch-triggered collection fires after the database has been quiet this
-// long (chat_turn rows are UPDATE-backfilled when a turn completes, so the
+// long (chat_turn rows are UPDATE-backfilled when a turn completes, and the
+// sub-agent history_v2 rows land in the same database.db/-wal pair, so the
 // quiet edge of a streaming burst is the useful moment), but never later
 // than MAX_WAIT after the burst began, and never more often than MIN_GAP.
 // The numbers match the shared collector's watch debounce (1.5s): Trae keeps
@@ -104,10 +105,13 @@ function createTraeCollection(options = {}) {
   // fixed cadence; the P1 check inside absorbs unchanged-database ticks.
   let pollTimer = null;
   let pollActive = false;
-  // P2 incremental state: the whole-table high-water id and the accumulated
+  // P2 incremental state: the whole-table high-water ids and the accumulated
   // rows keyed by messageId (which carries the id, so re-read overlap rows
-  // refresh in place instead of double-counting).
+  // refresh in place instead of double-counting). chat_turn and the sub-agent
+  // history_v2 ledger have independent id sequences, so each gets its own
+  // cursor; historyMaxId stays null when the source collects no sub-agents.
   let lastMaxId = 0;
+  let lastHistoryMaxId = null;
   const accumulatedRows = new Map();
   let lastSourceSignature = null;
   let lastAttemptAt = null;
@@ -405,21 +409,27 @@ function createTraeCollection(options = {}) {
         encKey,
         workDir,
         sinceId: lastMaxId || undefined,
+        sinceHistoryId: lastHistoryMaxId || undefined,
         source,
         onProgress: (progress) => log(`${logTag} decrypt ${progress.page}/${progress.totalPages} pages`)
       };
       let result = await collectSnapshot(collectArgs);
-      // chat_turn rebuilt under us (clear/recreate keeps a small MAX(id)): the
-      // accumulated rows are stale, redo once as a full read.
-      if (lastMaxId && Number.isFinite(result.maxId) && result.maxId < lastMaxId) {
+      // chat_turn or the sub-agent history_v2 ledger rebuilt under us (a
+      // clear/recreate keeps a small MAX(id)): the accumulated rows are stale,
+      // redo once as a full read of both tables.
+      const chatTurnRegressed = lastMaxId && Number.isFinite(result.maxId) && result.maxId < lastMaxId;
+      const historyRegressed = lastHistoryMaxId && Number.isFinite(result.historyMaxId) && result.historyMaxId < lastHistoryMaxId;
+      if (chatTurnRegressed || historyRegressed) {
         log(`${logTag} rowid regressed, falling back to a full read`);
         accumulatedRows.clear();
         lastMaxId = 0;
-        result = await collectSnapshot({ ...collectArgs, sinceId: undefined });
+        lastHistoryMaxId = null;
+        result = await collectSnapshot({ ...collectArgs, sinceId: undefined, sinceHistoryId: undefined });
       }
       for (const row of result.rows) accumulatedRows.set(row.messageId, row);
       const rows = [...accumulatedRows.values()];
       if (Number.isFinite(result.maxId) && result.maxId > lastMaxId) lastMaxId = result.maxId;
+      if (Number.isFinite(result.historyMaxId)) lastHistoryMaxId = Math.max(lastHistoryMaxId || 0, result.historyMaxId);
       // The newest actual turn in the data �?what "last activity" should mean.
       // capturedAt is only the collect time and moves on every tick, so it
       // must never back the UI's last-activity display.
@@ -509,8 +519,9 @@ function createTraeCollection(options = {}) {
       if (!keyPresent()) {
         snapshot = null;
         // A new key means a different (or reset) database; the incremental
-        // cursor and accumulated rows from the old one are meaningless.
+        // cursors and accumulated rows from the old one are meaningless.
         lastMaxId = 0;
+        lastHistoryMaxId = null;
         accumulatedRows.clear();
         lastSourceSignature = null;
       }

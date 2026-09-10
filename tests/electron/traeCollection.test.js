@@ -589,6 +589,50 @@ test('P2 falls back to a full read when chat_turn is rebuilt (id regresses)', as
   lane.stop();
 });
 
+test('P2 carries an independent history cursor and re-reads fully when it regresses', async () => {
+  const calls = [];
+  const { lane } = createLane({
+    deps: {
+      traeSourceSignature: () => `sig-${calls.length}`,
+      collectTraeSnapshot: async (args) => {
+        calls.push({ sinceId: args.sinceId, sinceHistoryId: args.sinceHistoryId });
+        if (calls.length === 1) {
+          return {
+            rows: [
+              { messageId: 'trae:cn:s1:1', input: 10, output: 0, cacheRead: 5, cacheWrite: 0, createdAt: 0, messages: 1 },
+              { messageId: 'trae:cn:s1:hv2:500', input: 4, output: 1, cacheRead: 0, cacheWrite: 0, createdAt: 0, messages: 1 }
+            ],
+            maxId: 1, historyMaxId: 500, pages: 1, bytes: 4096
+          };
+        }
+        if (calls.length === 2) {
+          // history_v2 rebuilt under us: its MAX(id) dropped below the cursor
+          // while chat_turn stayed healthy.
+          return { rows: [{ messageId: 'trae:cn:s1:hv2:3', input: 2, output: 1, cacheRead: 0, cacheWrite: 0, createdAt: 0, messages: 1 }], maxId: 1, historyMaxId: 3, pages: 1, bytes: 4096 };
+        }
+        // The triggered full re-read returns both sources.
+        return {
+          rows: [
+            { messageId: 'trae:cn:s1:1', input: 10, output: 0, cacheRead: 5, cacheWrite: 0, createdAt: 0, messages: 1 },
+            { messageId: 'trae:cn:s1:hv2:3', input: 2, output: 1, cacheRead: 0, cacheWrite: 0, createdAt: 0, messages: 1 }
+          ],
+          maxId: 1, historyMaxId: 3, pages: 1, bytes: 4096
+        };
+      },
+      buildTraePeriodsNormalized: ({ rows }) => fakePeriods(rows.reduce((sum, row) => sum + row.input + row.output, 0))
+    }
+  });
+  await lane.collectNow('first');
+  assert.deepEqual(calls[0], { sinceId: undefined, sinceHistoryId: undefined }, 'the first collect reads both tables fully');
+  assert.equal(lane.status().usage.today, 15, 'turn 10+0 plus sub-agent 4+1');
+  await lane.collectNow('second');
+  assert.deepEqual(calls[1], { sinceId: 1, sinceHistoryId: 500 }, 'each table resumes from its own cursor');
+  assert.deepEqual(calls[2], { sinceId: undefined, sinceHistoryId: undefined }, 'the history regression re-reads both tables fully');
+  assert.equal(lane.status().rowCount, 2, 'the stale hv2:500 row was dropped, hv2:3 replaced it');
+  assert.equal(lane.status().usage.today, 13, '10+0 (turn) + 2+1 (sub-agent), no double count');
+  lane.stop();
+});
+
 test('applyToSummary merges the snapshot only when enabled and supported', async () => {
   const { lane, settings } = createLane();
   await lane.collectNow('manual');

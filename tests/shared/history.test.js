@@ -101,6 +101,38 @@ test('parseGraphResult folds client rows into perClient/perModel and derives day
   });
 });
 
+test('parseGraphResult keeps the cache split for entries that explicitly declare unclassified tokens', () => {
+  // Trae sub-agent calls: counted, but with no cache fields — the input side
+  // rides as an explicit unclassified bucket. The day must stay exact (hit
+  // rate over the classified remainder), not degrade to "split unavailable".
+  const { contributions } = parseGraphResult({
+    contributions: [{
+      date: '2026-09-10',
+      clients: [
+        { client: 'traework', modelId: 'glm-5.2',
+          tokens: { input: 0, output: 300, cacheRead: 0, cacheWrite: 0, unclassified: 700 },
+          unclassifiedTokens: 700, cost: 0, messages: 1 },
+        { client: 'traework', modelId: 'kimi-k2.6',
+          tokens: { input: 50, output: 10, cacheRead: 40, cacheWrite: 0 },
+          cost: 0, messages: 1 }
+      ]
+    }]
+  });
+  const day = contributions[0];
+  assert.equal(day.tokens, 1100);
+  assert.equal(day.unclassifiedTokens, 700);
+  assert.equal(day.cacheReadTokens, 40);
+  assert.equal(day.outputTokens, 310);
+  assert.equal(day.tokenComponentsAvailable, true);
+  assert.deepEqual(day.perClient.traework, {
+    tokens: 1100, cost: 0, messages: 2,
+    unclassifiedTokens: 700,
+    cacheReadTokens: 40, outputTokens: 310
+  });
+  assert.equal(day.perModel['glm-5.2'].unclassifiedTokens, 700);
+  assert.equal(day.perModel['kimi-k2.6'].cacheReadTokens, 40);
+});
+
 test('parseGraphResult folds OMP graph rows into the existing Pi history identity', () => {
   const { contributions } = parseGraphResult({
     contributions: [{

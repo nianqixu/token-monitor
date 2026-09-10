@@ -32,7 +32,12 @@ const TRAE_SOURCES = {
     sessionPrefix: 'trae:cn',
     envDbPath: 'TOKEN_MONITOR_TRAE_CN_DB_PATH',
     enabledSetting: 'traeCollectionEnabled',
-    dbKeySetting: 'traeDbKey'
+    dbKeySetting: 'traeDbKey',
+    // Sub-agent LLM calls never appear in chat_turn — they live only in
+    // history_v2, keyed to the parent session via agent_run.parent_run_id.
+    // The lane reads chat_turn (main-agent turns, cache split intact) AND the
+    // sub-agent rows from this table. null = sub-agent collection disabled.
+    subUsageTable: 'history_v2'
   },
   traework: {
     id: 'traework',
@@ -44,7 +49,12 @@ const TRAE_SOURCES = {
     // The camelCase W keeps these distinct from the trae keys; both spellings
     // are saved user state, so neither can be derived from the id.
     enabledSetting: 'traeWorkCollectionEnabled',
-    dbKeySetting: 'traeWorkDbKey'
+    dbKeySetting: 'traeWorkDbKey',
+    // Verified against a live TRAE SOLO CN database: same SQLCipher layout,
+    // same agent_run/history_v2 schema (281 parented runs across Explore,
+    // Plan, browser_use, solo_work_lite, ...), so the same sub-agent lane
+    // collects here — without it ~15M tokens of sub-agent usage went unseen.
+    subUsageTable: 'history_v2'
   }
 };
 
@@ -70,6 +80,20 @@ const TRAE_MAX_ROWS = 500_000;
 const TRAE_TURNS_SQL = 'SELECT id, session_id, created_at, context FROM chat_turn WHERE context IS NOT NULL';
 const TRAE_TURNS_SINCE_SQL = `${TRAE_TURNS_SQL} AND id > ?`;
 const TRAE_MAX_ROWID_SQL = 'SELECT MAX(id) AS max_id FROM chat_turn';
+// Sub-agent ledger: agent_run rows with a parent are the sub-agent calls, and
+// their per-call token increments live in history_v2 keyed by agent_run_id.
+// Soft-deleted history rows are Trae's own pruned entries and stay excluded,
+// while the cursor anchors on the UNFILTERED whole-table MAX(id) — a trailing
+// deleted row must never strand the cursor below rows that already counted.
+const TRAE_SUB_RUN_IDS_SQL = "SELECT agent_run_id FROM agent_run WHERE parent_run_id IS NOT NULL AND parent_run_id != ''";
+// ORDER BY id keeps the SQL path in the same rowid order the targeted walk
+// yields (the agent_run_id IN (...) predicate alone lets SQLite scan through
+// an index in arbitrary order), so the two readers stay oracle-comparable.
+const TRAE_HISTORY_SUB_SELECT = 'SELECT id, session_id, created_at, messages, token_usage, agent_run_id FROM history_v2';
+const TRAE_HISTORY_SUB_WHERE = `(deleted_at IS NULL OR deleted_at = 0) AND agent_run_id IN (${TRAE_SUB_RUN_IDS_SQL})`;
+const TRAE_HISTORY_SUB_SQL = `${TRAE_HISTORY_SUB_SELECT} WHERE ${TRAE_HISTORY_SUB_WHERE} ORDER BY id`;
+const TRAE_HISTORY_SUB_SINCE_SQL = `${TRAE_HISTORY_SUB_SELECT} WHERE ${TRAE_HISTORY_SUB_WHERE} AND id > ? ORDER BY id`;
+const TRAE_HISTORY_MAX_ROWID_SQL = 'SELECT MAX(id) AS max_id FROM history_v2';
 // chat_turn rows are inserted with a zeroed token_usage during streaming and
 // UPDATE-backfilled when the turn completes. A bare `id > cursor` read would
 // permanently miss a backfill whose row already sits below the cursor, so the
@@ -360,6 +384,58 @@ function normalizeTraeTurnRow(row, source = TRAE_SOURCES.trae) {
   };
 }
 
+// Turns one sub-agent history_v2 row into the same usage-row shape. The row is
+// one LLM call: token_usage is the per-call total (input+output increment),
+// while the input split comes from raw_messages[].extra_info.input_token.
+// history_v2 carries NO cache accounting at all (verified against a live
+// database: cache-ish key names appear only inside prompt text, never as
+// numeric usage fields), so cacheRead/cacheWrite are structurally 0 — the
+// main-agent cache split stays sourced from chat_turn. The input side is
+// reported as `unclassified` instead of `input` for the same reason: an
+// unknown cache split must not render as cache miss, so sub-agent tokens
+// count toward totals only and stay out of every cache-hit-rate denominator.
+// The messageId embeds an `hv2` discriminator so a history_v2 id can never
+// collide with a chat_turn rowid in the mergeTraeRows dedup map.
+function normalizeTraeHistoryRow(row, source = TRAE_SOURCES.trae) {
+  const src = traeSource(source);
+  const total = nonNegativeInt(row?.token_usage ?? row?.tokenUsage);
+  if (total === 0) return null;
+  let messages;
+  try {
+    messages = JSON.parse(String(row?.messages ?? ''));
+  } catch (_) {
+    return null;
+  }
+  if (!messages || typeof messages !== 'object') return null;
+  const entries = Array.isArray(messages.raw_messages) ? messages.raw_messages : [];
+  let input = 0;
+  let model = '';
+  for (const entry of entries) {
+    const extra = entry?.extra_info ?? entry?.extraInfo;
+    if (!extra || typeof extra !== 'object') continue;
+    input += nonNegativeInt(extra.input_token ?? extra.inputToken);
+    if (!model) model = String(extra.model ?? extra.model_name ?? extra.modelName ?? '').trim();
+  }
+  const clampedInput = Math.min(total, input);
+  const createdAt = timestampMsFromSeconds(row?.created_at ?? row?.createdAt);
+  const sessionId = String(row?.session_id ?? row?.sessionId ?? '').trim() || 'unknown';
+  const rowId = String(row?.rowid ?? row?.rowId ?? '').trim();
+  const projectLabel = String(row?.project_label ?? row?.projectLabel ?? '').trim();
+  return {
+    sessionId: `${src.sessionPrefix}:${sessionId}`,
+    messageId: `${src.sessionPrefix}:${sessionId}:hv2:${rowId || `${createdAt}`}`,
+    model: model || 'trae',
+    projectLabel,
+    input: 0,
+    output: total - clampedInput,
+    cacheRead: 0,
+    cacheWrite: 0,
+    unclassified: clampedInput,
+    createdAt,
+    messages: 1
+  };
+}
+
 function traeProjectLabelsFromDb(database) {
   const tables = new Set(
     database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => String(row.name))
@@ -389,11 +465,16 @@ function traeProjectLabelsFromDb(database) {
   return { sessionProject, projectNames };
 }
 
-// Reads chat_turn usage rows from an already-decrypted database file. With
-// sinceId it reads only rows with id > sinceId - overlap (the rewind covers
+// Reads chat_turn usage rows (plus, when the source enables it, the sub-agent
+// rows from history_v2) from an already-decrypted database file. With sinceId
+// it reads only chat_turn rows with id > sinceId - overlap (the rewind covers
 // streaming rows whose token_usage is UPDATE-backfilled after they were first
 // inserted); maxId always reflects the whole table so a trailing row without
-// usage cannot strand the cursor.
+// usage cannot strand the cursor. sinceHistoryId rewinds the same overlap for
+// the independent history_v2 id sequence, whose whole-table high-water comes
+// back as historyMaxId (null when sub-agent collection is off or the tables
+// are absent — a missing optional sub-table degrades to chat_turn-only, the
+// pre-existing pipeline, never to a failed collect).
 function readTraeRows(decryptedDbPath, options = {}) {
   const source = traeSource(options.source);
   const sinceId = Number.isFinite(options.sinceId) && options.sinceId > 0
@@ -433,15 +514,66 @@ function readTraeRows(decryptedDbPath, options = {}) {
       }, source);
       if (normalized) rows.push(normalized);
     }
-    return { rows, maxId };
+    let historyMaxId = null;
+    if (source.subUsageTable && traeSubTablesPresent(database)) {
+      historyMaxId = readTraeSubAgentRows(database, source, options.sinceHistoryId, sessionProject, projectNames, rows);
+    }
+    return { rows, maxId, historyMaxId };
   } finally {
     database.close();
   }
 }
 
+// Both agent_run and the configured sub-usage table must exist for sub-agent
+// collection; history_v2 is purely additive (its rows are filtered to
+// sub-agent runs, so they never overlap chat_turn), hence absence degrades to
+// the chat_turn-only pipeline instead of failing the collect.
+function traeSubTablesPresent(database) {
+  try {
+    const names = new Set(
+      database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => String(row.name))
+    );
+    return names.has('agent_run') && names.has('history_v2');
+  } catch (_) {
+    return false;
+  }
+}
+
+// Appends sub-agent usage rows (read from history_v2, restricted to agent_run
+// rows that have a parent) into `rows` and returns the whole-table MAX(id).
+function readTraeSubAgentRows(database, source, sinceHistoryId, sessionProject, projectNames, rows) {
+  const historySinceId = Number.isFinite(sinceHistoryId) && sinceHistoryId > 0
+    ? Math.max(0, Math.trunc(sinceHistoryId) - TRAE_INCREMENTAL_OVERLAP)
+    : null;
+  const historyMaxRow = database.prepare(TRAE_HISTORY_MAX_ROWID_SQL).get();
+  const historyMaxId = Number.isFinite(Number(historyMaxRow?.max_id)) ? Number(historyMaxRow.max_id) : 0;
+  const historyStatement = historySinceId !== null
+    ? database.prepare(TRAE_HISTORY_SUB_SINCE_SQL)
+    : database.prepare(TRAE_HISTORY_SUB_SQL);
+  const historyIterator = historySinceId !== null ? historyStatement.iterate(historySinceId) : historyStatement.iterate();
+  for (const row of historyIterator) {
+    if (rows.length >= TRAE_MAX_ROWS) {
+      throw traeErrorCode('TRAE_READ_BUDGET_EXCEEDED', `trae: history_v2 read budget exceeded (${TRAE_MAX_ROWS} rows)`);
+    }
+    const projectId = sessionProject.get(String(row?.session_id ?? ''));
+    const normalized = normalizeTraeHistoryRow({
+      rowid: row?.id,
+      session_id: row?.session_id,
+      created_at: row?.created_at,
+      messages: row?.messages,
+      token_usage: row?.token_usage,
+      project_label: projectId ? (projectNames.get(projectId) || '') : ''
+    }, source);
+    if (normalized) rows.push(normalized);
+  }
+  return historyMaxId;
+}
+
 // Full snapshot: read the usage rows, decrypting as little as possible.
 // sinceId enables an incremental read (rows near/after that id); the returned
-// maxId is the whole-table high-water mark for the next cursor.
+// maxId is the whole-table high-water mark for the next cursor. sinceHistoryId
+// and historyMaxId are the independent pair for the sub-agent history_v2
+// sequence (null when sub-agent collection is off).
 //
 // Two readers behind one contract:
 //  - targeted (default): decrypts only the B-tree pages the read needs, in
@@ -456,7 +588,7 @@ function readTraeRows(decryptedDbPath, options = {}) {
 // The result records which reader won (`targeted: true/false`) plus, on a
 // fallback, `targetedFallback` with the reason for the log line.
 function collectTraeSnapshot({
-  dbPath, encKey, workDir, signal, onProgress, sinceId, source,
+  dbPath, encKey, workDir, signal, onProgress, sinceId, sinceHistoryId, source,
   decryptDb, readRows, targetedRead, env = process.env
 } = {}) {
   if (!workDir) throw traeErrorCode('TRAE_WORKDIR_MISSING', 'trae: work directory is not set');
@@ -470,10 +602,11 @@ function collectTraeSnapshot({
   if (!legacyMode && !targetedDisabled) {
     try {
       const readTargeted = targetedRead || require('./traeTargetedRead').readTraeTargetedRows;
-      const targeted = readTargeted({ dbPath, encKey, sinceId, signal, source });
+      const targeted = readTargeted({ dbPath, encKey, sinceId, sinceHistoryId, signal, source });
       return {
         rows: targeted.rows,
         maxId: targeted.maxId,
+        historyMaxId: targeted.historyMaxId ?? null,
         pages: targeted.pagesVisited,
         bytes: targeted.bytesRead,
         walPages: targeted.walPages || 0,
@@ -494,12 +627,14 @@ function collectTraeSnapshot({
   let meta;
   try {
     meta = decrypt({ dbPath, encKey, outputPath, signal, onProgress });
-    const result = read(outputPath, { sinceId, source });
+    const result = read(outputPath, { sinceId, sinceHistoryId, source });
     const rows = Array.isArray(result) ? result : result.rows;
     const maxId = Array.isArray(result) ? null : result.maxId;
+    const historyMaxId = Array.isArray(result) ? null : (result.historyMaxId ?? null);
     return {
       rows,
       maxId,
+      historyMaxId,
       pages: meta.pages,
       bytes: meta.bytes,
       walPages: meta.walPages || 0,
@@ -521,20 +656,26 @@ function buildTraeTokscaleJson(startMs, rows, includeUndated = false, client = T
     if (startMs && (row.createdAt ? row.createdAt < startMs : !includeUndated)) continue;
     const key = `${row.sessionId}\0${row.model}`;
     if (!grouped.has(key)) {
-      grouped.set(key, { ...row, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, messages: 0, startedAt: 0, lastUsedAt: 0 });
+      grouped.set(key, { ...row, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, unclassified: 0, messages: 0, startedAt: 0, lastUsedAt: 0 });
     }
     const group = grouped.get(key);
     group.input += row.input;
     group.output += row.output;
     group.cacheRead += row.cacheRead;
     group.cacheWrite += row.cacheWrite;
+    group.unclassified += row.unclassified || 0;
     group.messages += row.messages;
     if (row.createdAt && (!group.startedAt || row.createdAt < group.startedAt)) group.startedAt = row.createdAt;
     if (row.createdAt > group.lastUsedAt) group.lastUsedAt = row.createdAt;
   }
   const entries = [...grouped.values()].map((row) => ({
     client, mergedClients: null, sessionId: row.sessionId, model: row.model, provider: client,
+    // totalTokens must be explicit: the generic component-sum fallback knows
+    // nothing about `unclassified`, so the sub-agent share would silently
+    // drop out of every period total.
+    totalTokens: row.input + row.output + row.cacheRead + row.cacheWrite + row.unclassified,
     input: row.input, output: row.output, cacheRead: row.cacheRead, cacheWrite: row.cacheWrite,
+    unclassified: row.unclassified,
     reasoning: 0, messageCount: row.messages, cost: 0,
     startedAt: row.startedAt ? new Date(row.startedAt).toISOString() : '',
     lastUsedAt: row.lastUsedAt ? new Date(row.lastUsedAt).toISOString() : '',
@@ -544,7 +685,8 @@ function buildTraeTokscaleJson(startMs, rows, includeUndated = false, client = T
   return {
     groupBy: 'client,session,model', entries,
     totalInput: sum('input'), totalOutput: sum('output'), totalCacheRead: sum('cacheRead'),
-    totalCacheWrite: sum('cacheWrite'), totalMessages: sum('messageCount'), totalCost: 0, processingTimeMs: 0
+    totalCacheWrite: sum('cacheWrite'), totalUnclassified: sum('unclassified'),
+    totalMessages: sum('messageCount'), totalCost: 0, processingTimeMs: 0
   };
 }
 
@@ -583,14 +725,23 @@ function buildTraeHistoryGraph(options = {}) {
     const day = days.get(key);
     let model = day.clients.find((entry) => entry.modelId === row.model);
     if (!model) {
-      model = { client, modelId: row.model, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, messages: 0 };
+      model = { client, modelId: row.model, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, unclassified: 0 }, cost: 0, messages: 0 };
       day.clients.push(model);
     }
     model.tokens.input += row.input;
     model.tokens.output += row.output;
     model.tokens.cacheRead += row.cacheRead;
     model.tokens.cacheWrite += row.cacheWrite;
+    model.tokens.unclassified += row.unclassified || 0;
     model.messages += row.messages;
+  }
+  // `unclassifiedTokens` rides at the contribution level (sibling of `tokens`)
+  // because that is where history.js looks for the explicit bucket; sumTokens
+  // picks the in-tokens copy up so day totals keep closing over the total.
+  for (const day of days.values()) {
+    for (const entry of day.clients) {
+      if (entry.tokens.unclassified > 0) entry.unclassifiedTokens = entry.tokens.unclassified;
+    }
   }
   return { contributions: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) };
 }
@@ -705,6 +856,7 @@ module.exports = {
   localDayKeyOf,
   localMonthKeyOf,
   mergeTraeRows,
+  normalizeTraeHistoryRow,
   normalizeTraeTurnRow,
   readTraeRows,
   traeDataPaths,

@@ -13,6 +13,7 @@ const {
   readTraeTargetedRows
 } = require('../../src/shared/traeTargetedRead');
 const {
+  TRAE_SOURCES,
   buildTraeWalOverlay,
   collectTraeSnapshot,
   decryptTraeDb,
@@ -361,6 +362,136 @@ function buildEncryptedFixture(dir) {
   fs.writeFileSync(dbPath, Buffer.concat(encryptedPages));
   return { plainPath, dbPath, key, keyHex: key.toString('hex'), totalPages: encryptedPages.length };
 }
+
+// ---- Sub-agent (history_v2) fixture -------------------------------------
+// history_v2 is one row per sub-agent LLM call: token_usage is the per-call
+// total, the input split lives in messages.raw_messages[].extra_info.input_token,
+// and agent_run_id ties the row to an agent_run whose parent_run_id marks it a
+// sub-agent. This fixture carries a top-run row (must be excluded), a counted
+// sub-agent row, a soft-deleted sub-agent row (excluded from rows but raising
+// the cursor), a large messages blob that spills into an overflow chain, and a
+// chat_turn row so the merge of both sources is exercised together.
+function historyMessages(model, input) {
+  return JSON.stringify({ raw_messages: [{ role: 'assistant', extra_info: { model, input_token: input } }] });
+}
+
+function historyRecord({ sessionId, createdAt, messages, tokenUsage, agentRunId, deletedAt }) {
+  return encodeRecord([
+    nullColumn, // id is the rowid alias
+    textColumn(sessionId),
+    intColumn(createdAt),
+    textColumn(messages),
+    intColumn(tokenUsage),
+    textColumn(agentRunId),
+    deletedAt ? intColumn(deletedAt) : intColumn(0)
+  ]);
+}
+
+function buildSubAgentFixture(dir) {
+  const key = randomBytes(32);
+  const salt = randomBytes(16);
+  const builder = new FixtureBuilder();
+
+  const chatRoot = builder.buildTable([
+    { rowid: 1, payload: encodeRecord([nullColumn, textColumn('s1'), intColumn(1750000000), textColumn(usageContext(120))]) }
+  ]);
+  const agentRunRoot = builder.buildTable([
+    { rowid: 1, payload: encodeRecord([nullColumn, textColumn('top-run'), nullColumn, textColumn('s1')]) },
+    { rowid: 2, payload: encodeRecord([nullColumn, textColumn('sub-run'), textColumn('top-run'), textColumn('s1')]) }
+  ]);
+  // history_v2 columns: id, session_id, created_at, messages, token_usage,
+  // agent_run_id, deleted_at. Row 4 is a large overflow-bearing sub-agent call.
+  const historyRoot = builder.buildTable([
+    { rowid: 1, payload: historyRecord({ sessionId: 's1', createdAt: 1750000050, messages: historyMessages('mimo-v2.5', 60), tokenUsage: 100, agentRunId: 'sub-run', deletedAt: 0 }) },
+    { rowid: 2, payload: historyRecord({ sessionId: 's1', createdAt: 1750000060, messages: historyMessages('mimo-v2.5', 10), tokenUsage: 20, agentRunId: 'top-run', deletedAt: 0 }) },
+    { rowid: 3, payload: historyRecord({ sessionId: 's1', createdAt: 1750000080, messages: historyMessages('mimo-v2.5', 1), tokenUsage: 5, agentRunId: 'sub-run', deletedAt: 1750000999 }) },
+    { rowid: 4, payload: historyRecord({ sessionId: 's1', createdAt: 1750000090, messages: JSON.stringify({ raw_messages: [{ role: 'assistant', extra_info: { model: 'kimi-k2.7', input_token: 500 } }], pad: 'x'.repeat(6000) }), tokenUsage: 900, agentRunId: 'sub-run', deletedAt: 0 }) }
+  ]);
+  const sessionProjectRoot = builder.buildTable([
+    { rowid: 1, payload: encodeRecord([textColumn('s1'), textColumn('p1')]) }
+  ]);
+  const projectRoot = builder.buildTable([
+    { rowid: 1, payload: encodeRecord([textColumn('p1'), textColumn('C:\\work\\demo-project')]) }
+  ]);
+
+  const masterRows = [
+    ['chat_turn', 'CREATE TABLE chat_turn (id INTEGER PRIMARY KEY, session_id TEXT, created_at INTEGER, context TEXT)', chatRoot],
+    ['agent_run', 'CREATE TABLE agent_run (id INTEGER PRIMARY KEY, agent_run_id TEXT, parent_run_id TEXT, session_id TEXT)', agentRunRoot],
+    ['history_v2', 'CREATE TABLE history_v2 (id INTEGER PRIMARY KEY, session_id TEXT, created_at INTEGER, messages TEXT, token_usage INTEGER, agent_run_id TEXT, deleted_at INTEGER)', historyRoot],
+    ['session_project', 'CREATE TABLE session_project (session_id TEXT, project_id TEXT)', sessionProjectRoot],
+    ['project', 'CREATE TABLE project (project_id TEXT, absolute_path TEXT)', projectRoot]
+  ];
+  const masterCells = masterRows.map(([name, sql, root], index) =>
+    builder.buildCell(index + 1, encodeRecord([textColumn('table'), textColumn(name), textColumn(name), intColumn(root), textColumn(sql)])));
+  builder.pages[0] = builder.makeHeaderPage(masterCells);
+
+  const plainPath = path.join(dir, 'plain.db');
+  const dbPath = path.join(dir, 'database.db');
+  fs.writeFileSync(plainPath, Buffer.concat(builder.pages));
+  const check = new sqlite.DatabaseSync(plainPath, { readOnly: true });
+  try {
+    assert.equal(check.prepare('SELECT count(*) n FROM history_v2').get().n, 4, 'fixture readable by real SQLite');
+  } finally {
+    check.close();
+  }
+  const plain = fs.readFileSync(plainPath);
+  const encryptedPages = [];
+  for (let offset = 0; offset < plain.length; offset += PAGE) {
+    encryptedPages.push(encryptPage(plain.subarray(offset, offset + PAGE), offset / PAGE + 1, key, salt));
+  }
+  fs.writeFileSync(dbPath, Buffer.concat(encryptedPages));
+  return { plainPath, dbPath, keyHex: key.toString('hex') };
+}
+
+(sqlite ? test : test.skip)('targeted read merges sub-agent history_v2 rows and matches the SQL oracle', () => {
+  const dir = writeTempDir();
+  try {
+    const fixture = buildSubAgentFixture(dir);
+    const oracle = readTraeRows(fixture.plainPath, { source: TRAE_SOURCES.trae });
+    const targeted = readTraeTargetedRows({ dbPath: fixture.dbPath, encKey: fixture.keyHex, source: TRAE_SOURCES.trae });
+
+    assert.deepEqual(targeted.rows, oracle.rows, 'targeted sub-agent rows must match the full-decrypt oracle');
+    assert.equal(targeted.maxId, oracle.maxId);
+    assert.equal(targeted.historyMaxId, oracle.historyMaxId);
+    // 1 chat_turn + 2 sub-agent rows (top-run excluded, soft-deleted excluded).
+    assert.equal(targeted.rows.length, 3);
+    assert.equal(targeted.historyMaxId, 4, 'the whole-table MAX(id) includes the soft-deleted row');
+    const sub = targeted.rows.filter((row) => row.messageId.includes(':hv2:'));
+    assert.equal(sub.length, 2);
+    assert.ok(sub.every((row) => row.cacheRead === 0 && row.cacheWrite === 0), 'history_v2 carries no cache');
+    assert.equal(sub.find((row) => row.messageId.endsWith(':hv2:1')).unclassified, 60);
+    // The overflow-bearing row (id 4) must survive the spill reassembly.
+    const overflowSub = sub.find((row) => row.messageId.endsWith(':hv2:4'));
+    assert.ok(overflowSub, 'overflowing history_v2 messages row must be read');
+    assert.equal(overflowSub.model, 'kimi-k2.7');
+    assert.equal(overflowSub.unclassified, 500);
+    assert.equal(overflowSub.output, 400);
+    // The chat_turn row keeps its own id space (no hv2 discriminator) and its
+    // usage came from context, not from history_v2.
+    const turn = targeted.rows.find((row) => !row.messageId.includes(':hv2:'));
+    assert.equal(turn.messageId, 'trae:cn:s1:1');
+    assert.equal(turn.model, 'glm-5.1');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+(sqlite ? test : test.skip)('targeted incremental read honors sinceHistoryId independently of sinceId', () => {
+  const dir = writeTempDir();
+  try {
+    const fixture = buildSubAgentFixture(dir);
+    // sinceHistoryId=4 rewinds to id>max(0,4-256)=... still reads all history,
+    // but a large sinceHistoryId prunes it entirely while chat_turn stays.
+    const pruned = readTraeTargetedRows({ dbPath: fixture.dbPath, encKey: fixture.keyHex, source: TRAE_SOURCES.trae, sinceId: 1, sinceHistoryId: 100000 });
+    const oracle = readTraeRows(fixture.plainPath, { source: TRAE_SOURCES.trae, sinceId: 1, sinceHistoryId: 100000 });
+    assert.deepEqual(pruned.rows, oracle.rows);
+    assert.equal(pruned.rows.filter((row) => row.messageId.includes(':hv2:')).length, 0, 'history pruned to nothing');
+    assert.equal(pruned.maxId, 1, 'chat_turn row remains');
+    assert.equal(pruned.historyMaxId, 4, 'history cursor still anchors on whole-table MAX(id)');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 (sqlite ? test : test.skip)('targeted read matches the full decrypt+SQL oracle row for row', () => {
   const dir = writeTempDir();
@@ -767,20 +898,34 @@ const realTraeKey = (() => {
 const realDbReady = Boolean(realDbPath && fs.existsSync(realDbPath) && realTraeKey);
 
 (sqlite && realDbReady ? test : test.skip)('real Trae database: targeted read matches full decrypt', { timeout: 120_000 }, () => {
-  const targeted = readTraeTargetedRows({ dbPath: realDbPath, encKey: realTraeKey });
   const dir = writeTempDir();
   try {
+    // history_v2 grows on every model call, so reading the live database twice
+    // (targeted, then the decrypted copy) races with Trae's own writes.
+    // Snapshot db + wal into the temp dir first; both readers then see the
+    // exact same bytes.
+    const snapshotDb = path.join(dir, 'database.db');
+    fs.copyFileSync(realDbPath, snapshotDb);
+    for (const suffix of ['-wal', '-shm']) {
+      try { fs.copyFileSync(`${realDbPath}${suffix}`, `${snapshotDb}${suffix}`); } catch (_) { /* absent */ }
+    }
+    const targeted = readTraeTargetedRows({ dbPath: snapshotDb, encKey: realTraeKey });
     const decryptedPath = path.join(dir, 'real-decrypted.db');
-    decryptTraeDb({ dbPath: realDbPath, encKey: realTraeKey, outputPath: decryptedPath });
-    const oracle = readTraeRows(decryptedPath);
+    decryptTraeDb({ dbPath: snapshotDb, encKey: realTraeKey, outputPath: decryptedPath });
+    const oracle = readTraeRows(decryptedPath, { source: TRAE_SOURCES.trae });
     assert.equal(targeted.maxId, oracle.maxId, `maxId: targeted=${targeted.maxId} full=${oracle.maxId}`);
+    assert.equal(targeted.historyMaxId, oracle.historyMaxId, `historyMaxId: targeted=${targeted.historyMaxId} full=${oracle.historyMaxId}`);
     assert.deepEqual(
       targeted.rows.map((row) => row.messageId),
       oracle.rows.map((row) => row.messageId)
     );
     assert.deepEqual(targeted.rows, oracle.rows);
+    // The whole point of the change: sub-agent calls are visible on the real
+    // database through the targeted reader.
+    assert.ok(targeted.rows.some((row) => row.messageId.includes(':hv2:')),
+      'real database must yield sub-agent history_v2 rows');
     // Selectivity: a 400MB database must not be read page-by-page.
-    const totalPages = Math.ceil(fs.statSync(realDbPath).size / PAGE);
+    const totalPages = Math.ceil(fs.statSync(snapshotDb).size / PAGE);
     assert.ok(targeted.pagesVisited < totalPages / 2,
       `targeted visited ${targeted.pagesVisited}/${totalPages} pages`);
   } finally {

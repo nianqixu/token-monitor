@@ -3,8 +3,9 @@
 // Selective in-memory reader for the SQLCipher-encrypted Trae CN database.
 // Instead of decrypting the whole file to a temp plaintext copy (391MB of IO
 // per collect), decrypts only the B-tree pages of the tables the pipeline
-// actually reads — sqlite_master, chat_turn, session_project, project — and
-// parses SQLite's page/record format directly. Every SQLCipher page carries
+// actually reads — sqlite_master, chat_turn, session_project, project, plus
+// (when the source enables sub-agent collection) agent_run and history_v2 —
+// and parses SQLite's page/record format directly. Every SQLCipher page carries
 // its own random IV in the reserve area, so any page decrypts independently
 // and the visited-page row set is identical to decrypt-then-SQL.
 //
@@ -25,8 +26,10 @@ const {
   TRAE_SALT_SZ,
   buildTraeWalOverlay,
   decryptTraePageInto,
+  normalizeTraeHistoryRow,
   normalizeTraeTurnRow,
   traeErrorCode,
+  traeSource: resolveTraeSource,
   verifyTraeKey
 } = require('./traeUsage');
 
@@ -54,6 +57,13 @@ const TEXT_ENCODING_UTF8 = 1;
 const TABLE_CHAT_TURN = 'chat_turn';
 const TABLE_SESSION_PROJECT = 'session_project';
 const TABLE_PROJECT = 'project';
+// Sub-agent ledger tables (Trae CN only, gated by source.subUsageTable).
+// agent_run carries the parent links that identify sub-agent calls; history_v2
+// carries their per-call token increments. Both are optional: a database
+// without either degrades to the chat_turn-only pipeline, mirroring the SQL
+// path's traeSubTablesPresent check.
+const TABLE_AGENT_RUN = 'agent_run';
+const TABLE_HISTORY_V2 = 'history_v2';
 
 function corrupt(code, message) {
   return traeErrorCode(code, `trae targeted: ${message}`);
@@ -462,15 +472,20 @@ function buildProjectAttribution(source, schemas) {
 }
 
 // Selective equivalent of decryptTraeDb + readTraeRows. Returns the same
-// { rows, maxId } shape plus visited-page stats for logging.
-function readTraeTargetedRows({ dbPath, encKey, sinceId, signal, source: traeSource, maxRows = TRAE_MAX_ROWS } = {}) {
+// { rows, maxId, historyMaxId } shape plus visited-page stats for logging.
+// historyMaxId is null when the source does not collect sub-agents or the
+// ledger tables are absent (chat_turn-only pipeline).
+function readTraeTargetedRows({ dbPath, encKey, sinceId, sinceHistoryId, signal, source: sourceArg, maxRows = TRAE_MAX_ROWS } = {}) {
   if (!dbPath) throw traeErrorCode('TRAE_DB_NOT_FOUND', 'trae targeted: database path is not set');
   const key = typeof encKey === 'string' ? Buffer.from(String(encKey || ''), 'hex') : Buffer.from(encKey || []);
   if (key.length !== 32) throw traeErrorCode('TRAE_KEY_INVALID', 'trae targeted: encryption key is missing or malformed');
+  const source = resolveTraeSource(sourceArg);
 
-  const source = new PageSource(dbPath, key, signal);
+  const pageSource = new PageSource(dbPath, key, signal);
   try {
-    const schemas = readSchemaTables(source, [TABLE_CHAT_TURN, TABLE_SESSION_PROJECT, TABLE_PROJECT]);
+    const wantedTables = [TABLE_CHAT_TURN, TABLE_SESSION_PROJECT, TABLE_PROJECT];
+    if (source.subUsageTable) wantedTables.push(TABLE_AGENT_RUN, TABLE_HISTORY_V2);
+    const schemas = readSchemaTables(pageSource, wantedTables);
     const chatTurn = schemas.get(TABLE_CHAT_TURN);
     if (!chatTurn) throw traeErrorCode('TRAE_SCHEMA_UNSUPPORTED', 'trae targeted: chat_turn table is missing');
     const chatColumns = parseCreateTableColumns(chatTurn.sql || '');
@@ -482,11 +497,11 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, signal, source: traeSou
     const lowerBound = Number.isFinite(sinceId) && sinceId > 0
       ? Math.max(0, Math.trunc(sinceId) - TRAE_INCREMENTAL_OVERLAP)
       : null;
-    const attribution = buildProjectAttribution(source, schemas);
+    const attribution = buildProjectAttribution(pageSource, schemas);
 
     const rows = [];
     let maxId = 0;
-    for (const cell of walkTable(source, chatTurn.rootPage, lowerBound)) {
+    for (const cell of walkTable(pageSource, chatTurn.rootPage, lowerBound)) {
       maxId = Math.max(maxId, cell.rowid);
       if (lowerBound !== null && cell.rowid <= lowerBound) continue;
       const values = parseRecord(cell.payload);
@@ -505,7 +520,7 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, signal, source: traeSou
         created_at: createdAt,
         context,
         project_label: projectId ? (attribution.projectNames.get(projectId) || '') : ''
-      }, traeSource);
+      }, source);
       if (normalized) {
         rows.push(normalized);
         if (rows.length >= maxRows) {
@@ -515,11 +530,88 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, signal, source: traeSou
     }
     // maxId must reflect the whole table even when the pruned walk skipped
     // older leaves — take it from a rightmost descent.
-    if (lowerBound !== null) maxId = maxRowid(source, chatTurn.rootPage);
-    return { rows, maxId, pagesVisited: source.visited.size, bytesRead: source.bytesRead, walPages: source.walHits };
+    if (lowerBound !== null) maxId = maxRowid(pageSource, chatTurn.rootPage);
+
+    const historyMaxId = source.subUsageTable
+      ? readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, attribution, rows, maxRows)
+      : null;
+
+    return { rows, maxId, historyMaxId, pagesVisited: pageSource.visited.size, bytesRead: pageSource.bytesRead, walPages: pageSource.walHits };
   } finally {
-    source.close();
+    pageSource.close();
   }
+}
+
+// Targeted equivalent of readTraeSubAgentRows: builds the sub-agent run-id set
+// from the (small) agent_run table, then walks history_v2 with the same
+// lower-bound pruning and whole-table MAX(id) the chat_turn walk uses. Returns
+// null — and appends nothing — when either ledger table is absent, so a
+// database predating sub-agents stays on the chat_turn-only pipeline.
+function readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, attribution, rows, maxRows) {
+  const agentRun = schemas.get(TABLE_AGENT_RUN);
+  const historyV2 = schemas.get(TABLE_HISTORY_V2);
+  if (!agentRun || !historyV2) return null;
+
+  const subRunIds = new Set();
+  for (const run of readTableRows(pageSource, schemas, TABLE_AGENT_RUN)) {
+    const parent = run.parent_run_id;
+    if (parent !== null && parent !== undefined && String(parent) !== '') {
+      subRunIds.add(String(run.agent_run_id ?? ''));
+    }
+  }
+
+  const columns = parseCreateTableColumns(historyV2.sql || '');
+  const idIdx = requireColumn(columns.columns, 'id', TABLE_HISTORY_V2);
+  const sessionIdIdx = requireColumn(columns.columns, 'session_id', TABLE_HISTORY_V2);
+  const createdAtIdx = requireColumn(columns.columns, 'created_at', TABLE_HISTORY_V2);
+  const messagesIdx = requireColumn(columns.columns, 'messages', TABLE_HISTORY_V2);
+  const tokenUsageIdx = requireColumn(columns.columns, 'token_usage', TABLE_HISTORY_V2);
+  const agentRunIdIdx = requireColumn(columns.columns, 'agent_run_id', TABLE_HISTORY_V2);
+  const deletedAtIdx = columns.columns.indexOf('deleted_at');
+
+  const historyLowerBound = Number.isFinite(sinceHistoryId) && sinceHistoryId > 0
+    ? Math.max(0, Math.trunc(sinceHistoryId) - TRAE_INCREMENTAL_OVERLAP)
+    : null;
+
+  let historyMaxId = 0;
+  for (const cell of walkTable(pageSource, historyV2.rootPage, historyLowerBound)) {
+    historyMaxId = Math.max(historyMaxId, cell.rowid);
+    if (historyLowerBound !== null && cell.rowid <= historyLowerBound) continue;
+    const values = parseRecord(cell.payload);
+    if (values.length > columns.columns.length) {
+      throw corrupt('TRAE_RECORD_INVALID', 'history_v2: record has more values than columns');
+    }
+    if (deletedAtIdx >= 0) {
+      const deletedAt = deletedAtIdx < values.length ? values[deletedAtIdx] : null;
+      if (deletedAt) continue; // WHERE deleted_at IS NULL OR deleted_at = 0
+    }
+    const agentRunId = agentRunIdIdx < values.length ? String(values[agentRunIdIdx] ?? '') : '';
+    if (!subRunIds.has(agentRunId)) continue; // agent_run_id IN (sub-agent runs)
+    const id = columns.rowidAliasIndex === idIdx ? cell.rowid : (values[idIdx] ?? cell.rowid);
+    const tokenUsage = tokenUsageIdx < values.length ? values[tokenUsageIdx] : null;
+    if (!tokenUsage) continue; // WHERE token_usage > 0 (in-flight/empty rows drop)
+    const sessionId = sessionIdIdx < values.length ? values[sessionIdIdx] : null;
+    const createdAt = createdAtIdx < values.length ? values[createdAtIdx] : null;
+    const messages = messagesIdx < values.length ? values[messagesIdx] : null;
+    const projectId = attribution.sessionProject.get(String(sessionId ?? ''));
+    const normalized = normalizeTraeHistoryRow({
+      rowid: id,
+      session_id: sessionId,
+      created_at: createdAt,
+      messages,
+      token_usage: tokenUsage,
+      project_label: projectId ? (attribution.projectNames.get(projectId) || '') : ''
+    }, source);
+    if (normalized) {
+      rows.push(normalized);
+      if (rows.length >= maxRows) {
+        throw traeErrorCode('TRAE_READ_BUDGET_EXCEEDED', `trae targeted: history_v2 read budget exceeded (${maxRows} rows)`);
+      }
+    }
+  }
+  // Whole-table high-water even when pruning skipped older leaves.
+  if (historyLowerBound !== null) historyMaxId = maxRowid(pageSource, historyV2.rootPage);
+  return historyMaxId;
 }
 
 module.exports = {
