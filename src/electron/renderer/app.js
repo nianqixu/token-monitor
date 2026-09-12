@@ -264,7 +264,7 @@ const VIEW_DISPLAY_OPTIONS = [
   { id: 'limits', labelKey: 'views.limits' },
   { id: 'trends', labelKey: 'views.trends' }
 ];
-const viewPeriodValues = new Set(['today', 'month', 'week', 'last7', 'last30', 'allTime']);
+const viewPeriodValues = new Set(['today', 'yesterday', 'dayBefore', 'month', 'week', 'last7', 'last30', 'allTime']);
 const viewBreakdownValues = new Set(['home', ...baseBreakdownOrder, 'status', 'limits', 'trends']);
 const HOME_MODULE_OPTIONS = [
   { id: 'limits', labelKey: 'home.limits', viewId: 'limits' },
@@ -359,7 +359,7 @@ state.fixedPeriodHistoryRetryTimer = null;
 state.fixedPeriodHistoryPromise = null;
 state.fixedPeriodHistoryCoordinator = null;
 state.fixedPeriodSnapshot = null;
-state.periodMenuOpen = false;
+state.periodMenuOpen = '';
 let directBreakdownOverride = null;
 state.projectSettingsExpanded = false;
 state.homeActivitySettingsExpanded = false;
@@ -374,12 +374,15 @@ const els = {
   subscriptionList: document.getElementById('subscriptionList'), subscriptionAddForm: document.getElementById('subscriptionAddForm'), subscriptionAddToggle: document.getElementById('subscriptionAddToggle'), subscriptionAddDetails: document.getElementById('subscriptionAddDetails'), subscriptionProviderInput: document.getElementById('subscriptionProviderInput'), subscriptionAccountInput: document.getElementById('subscriptionAccountInput'), subscriptionPlanNameInput: document.getElementById('subscriptionPlanNameInput'), subscriptionAmountInput: document.getElementById('subscriptionAmountInput'), subscriptionCurrencyInput: document.getElementById('subscriptionCurrencyInput'), subscriptionIntervalCountInput: document.getElementById('subscriptionIntervalCountInput'), subscriptionIntervalInput: document.getElementById('subscriptionIntervalInput'), subscriptionStartDateInput: document.getElementById('subscriptionStartDateInput'), subscriptionAutoRenewInput: document.getElementById('subscriptionAutoRenewInput'), subscriptionNextRenewalInput: document.getElementById('subscriptionNextRenewalInput'), subscriptionNote: document.getElementById('subscriptionNote'), subscriptionOrphanNotice: document.getElementById('subscriptionOrphanNotice'), subscriptionOrphanText: document.getElementById('subscriptionOrphanText'), subscriptionOrphanAdopt: document.getElementById('subscriptionOrphanAdopt'), subscriptionOrphanDiscard: document.getElementById('subscriptionOrphanDiscard'), subscriptionSyncError: document.getElementById('subscriptionSyncError'), subscriptionNextRenewalLabel: document.getElementById('subscriptionNextRenewalLabel'), subscriptionNextRenewalNote: document.getElementById('subscriptionNextRenewalNote'), subscriptionSubmit: document.getElementById('subscriptionSubmit'), subscriptionCancelEdit: document.getElementById('subscriptionCancelEdit'), subscriptionTotalRow: document.getElementById('subscriptionTotalRow'), subscriptionErrorMessage: document.getElementById('subscriptionErrorMessage'), subscriptionPlanFields: document.getElementById('subscriptionPlanFields'), subscriptionTopUpFields: document.getElementById('subscriptionTopUpFields'), subscriptionTopUpList: document.getElementById('subscriptionTopUpList'), subscriptionTopUpDateInput: document.getElementById('subscriptionTopUpDateInput'), subscriptionTopUpAmountInput: document.getElementById('subscriptionTopUpAmountInput'), subscriptionTopUpAddButton: document.getElementById('subscriptionTopUpAddButton'), subscriptionAmountRow: document.getElementById('subscriptionAmountRow'), subscriptionTopUpHeadingRow: document.getElementById('subscriptionTopUpHeadingRow'), subscriptionKindInputs: [...document.querySelectorAll('input[name="subscriptionKind"]')]
 };
 Object.assign(els, {
+  anchorSnapshotBanner: document.getElementById('anchorSnapshotBanner'),
   fixedPeriodMessage: document.getElementById('fixedPeriodMessage'),
   toolDetailFooter: document.getElementById('toolDetailFooter'),
   toolDetailFooterTokens: document.getElementById('toolDetailFooterTokens'),
   toolDetailFooterModels: document.getElementById('toolDetailFooterModels'),
   monthPeriodMenu: document.getElementById('monthPeriodMenu'),
   monthPeriodTab: document.getElementById('monthPeriodTab'),
+  dayPeriodMenu: document.getElementById('dayPeriodMenu'),
+  dayPeriodTab: document.getElementById('dayPeriodTab'),
   periodMonthModeInput: document.getElementById('periodMonthModeInput'),
   modelRankingMetricInputs: Array.from(document.querySelectorAll('input[name="modelRankingMetric"]'))
 });
@@ -7143,8 +7146,13 @@ function hidePeriodContentForMessage(message) {
   els.sessionDetailHead.classList.add('hidden');
 }
 
-function periodMenuButtons() {
-  return Array.from(els.monthPeriodMenu?.querySelectorAll('[data-fixed-period]') || []);
+function periodMenuButtons(menu = state.periodMenuOpen) {
+  const container = menu === 'day' ? els.dayPeriodMenu : els.monthPeriodMenu;
+  return Array.from(container?.querySelectorAll('[data-fixed-period]') || []);
+}
+
+function periodMenuTab(menu = state.periodMenuOpen) {
+  return menu === 'day' ? els.dayPeriodTab : els.monthPeriodTab;
 }
 
 function focusPeriodMenuButton(index) {
@@ -7155,33 +7163,45 @@ function focusPeriodMenuButton(index) {
   target?.focus();
 }
 
-function setPeriodMenuOpen(open, { restoreFocus = false, focus = '' } = {}) {
-  state.periodMenuOpen = Boolean(open);
-  els.monthPeriodMenu?.closest('.titlebar')?.classList.toggle('period-menu-open', state.periodMenuOpen);
-  els.monthPeriodMenu?.classList.toggle('hidden', !state.periodMenuOpen);
-  els.monthPeriodTab?.setAttribute('aria-expanded', String(state.periodMenuOpen));
-  for (const button of periodMenuButtons()) {
-    button.tabIndex = state.periodMenuOpen && button.classList.contains('is-current') ? 0 : -1;
+function setPeriodMenuOpen(open, { menu = 'month', restoreFocus = false, focus = '' } = {}) {
+  const previous = state.periodMenuOpen;
+  const next = open ? (menu === 'day' ? 'day' : 'month') : '';
+  state.periodMenuOpen = next;
+  els.monthPeriodMenu?.closest('.titlebar')?.classList.toggle('period-menu-open', Boolean(next));
+  els.monthPeriodMenu?.classList.toggle('hidden', next !== 'month');
+  els.dayPeriodMenu?.classList.toggle('hidden', next !== 'day');
+  els.monthPeriodTab?.setAttribute('aria-expanded', String(next === 'month'));
+  els.dayPeriodTab?.setAttribute('aria-expanded', String(next === 'day'));
+  for (const key of ['month', 'day']) {
+    for (const button of periodMenuButtons(key)) {
+      button.tabIndex = next === key && button.classList.contains('is-current') ? 0 : -1;
+    }
   }
-  if (state.periodMenuOpen && focus) {
-    const buttons = periodMenuButtons();
+  if (next && focus) {
+    const buttons = periodMenuButtons(next);
     const current = Math.max(0, buttons.findIndex((button) => button.classList.contains('is-current')));
     focusPeriodMenuButton(focus === 'first' ? 0 : focus === 'last' ? buttons.length - 1 : current);
   }
-  if (!state.periodMenuOpen && restoreFocus) els.monthPeriodTab?.focus();
+  if (!next && restoreFocus) periodMenuTab(previous)?.focus();
 }
 
 function syncPeriodMenu() {
-  const mode = fixedPeriodRangesApi.slotForSelection(state.period) === 'month'
-    ? fixedPeriodRangesApi.normalizeMonthMode(state.period)
-    : fixedPeriodRangesApi.normalizeMonthMode(state.settings?.periodMonthMode);
-  for (const button of periodMenuButtons()) {
-    const active = button.dataset.fixedPeriod === mode;
-    button.classList.toggle('is-current', active);
-    button.setAttribute('aria-checked', String(active));
-    if (active) button.setAttribute('aria-current', 'true');
-    else button.removeAttribute('aria-current');
-    button.tabIndex = state.periodMenuOpen && active ? 0 : -1;
+  const activeSlot = fixedPeriodRangesApi.slotForSelection(state.period);
+  const monthMode = fixedPeriodRangesApi.normalizeMonthMode(activeSlot === 'month'
+    ? state.period
+    : state.settings?.periodMonthMode);
+  const dayMode = fixedPeriodRangesApi.normalizeDayMode(activeSlot === 'today'
+    ? state.period
+    : state.settings?.periodDayMode);
+  for (const [key, mode] of [['month', monthMode], ['day', dayMode]]) {
+    for (const button of periodMenuButtons(key)) {
+      const active = button.dataset.fixedPeriod === mode;
+      button.classList.toggle('is-current', active);
+      button.setAttribute('aria-checked', String(active));
+      if (active) button.setAttribute('aria-current', 'true');
+      else button.removeAttribute('aria-current');
+      button.tabIndex = state.periodMenuOpen === key && active ? 0 : -1;
+    }
   }
 }
 
@@ -8118,7 +8138,34 @@ function renderHome() {
 // panel open the stats scheduler renders settings components only (lane panels
 // included), and the total shown at the bottom of the window would otherwise go
 // stale until the user clicked something that runs a full render().
+// The main process can seed the panel from the persisted collector anchor when
+// the first scan of this run is still going. A same-day seed is current; a
+// cross-day one carries `anchorSnapshot`, and its "today" belongs to that
+// earlier day — the banner is what keeps those numbers from reading as the
+// current day's. Any later real push replaces the stats wholesale and the
+// banner disappears with the field.
+function renderAnchorSnapshotBanner() {
+  const el = els.anchorSnapshotBanner;
+  if (!el) return;
+  const snapshot = state.stats?.anchorSnapshot || null;
+  const capturedAt = Date.parse(snapshot?.capturedAt || '');
+  if (!snapshot || !Number.isFinite(capturedAt)) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    return;
+  }
+  const time = new Intl.DateTimeFormat(currentLocale(), {
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(capturedAt);
+  el.textContent = t('dashboard.anchorSnapshot', { time });
+  el.classList.remove('hidden');
+}
+
 function renderMainTotal() {
+  renderAnchorSnapshotBanner();
   const derivedPeriod = fixedPeriodRangesApi.isDerived(state.period);
   if (derivedPeriod) {
     state.fixedPeriodSnapshot = buildFixedPeriodSnapshot();
@@ -9555,6 +9602,13 @@ function syncPeriodTabs() {
       : fixedPeriodRangesApi.normalizeMonthMode(state.settings?.periodMonthMode);
     els.monthPeriodTab.textContent = fixedPeriodRangesApi.displayLabel(mode);
     els.monthPeriodTab.dataset.period = mode;
+  }
+  if (els.dayPeriodTab) {
+    const mode = activeSlot === 'today'
+      ? fixedPeriodRangesApi.normalizeDayMode(state.period)
+      : fixedPeriodRangesApi.normalizeDayMode(state.settings?.periodDayMode);
+    els.dayPeriodTab.textContent = fixedPeriodRangesApi.displayLabel(mode);
+    els.dayPeriodTab.dataset.period = mode;
   }
   syncPeriodMenu();
 }
@@ -12655,13 +12709,20 @@ for (const tab of document.querySelectorAll('.tab')) {
     const activeSlot = fixedPeriodRangesApi.slotForSelection(state.period);
     if (slot === 'month' && activeSlot === 'month') {
       event.stopPropagation();
-      setPeriodMenuOpen(!state.periodMenuOpen, { focus: state.periodMenuOpen ? '' : 'current' });
+      setPeriodMenuOpen(state.periodMenuOpen !== 'month', { menu: 'month', focus: state.periodMenuOpen === 'month' ? '' : 'current' });
+      return;
+    }
+    if (slot === 'today' && activeSlot === 'today') {
+      event.stopPropagation();
+      setPeriodMenuOpen(state.periodMenuOpen !== 'day', { menu: 'day', focus: state.periodMenuOpen === 'day' ? '' : 'current' });
       return;
     }
     setPeriodMenuOpen(false);
     const targetPeriod = slot === 'month'
       ? fixedPeriodRangesApi.normalizeMonthMode(state.settings?.periodMonthMode)
-      : tab.dataset.period;
+      : slot === 'today'
+        ? fixedPeriodRangesApi.normalizeDayMode(state.settings?.periodDayMode)
+        : tab.dataset.period;
     const snapshot = captureBreakdownMotion();
     if (!setPeriod(targetPeriod)) return;
     syncPeriodTabs();
@@ -12697,10 +12758,35 @@ for (const button of els.monthPeriodMenu?.querySelectorAll('[data-fixed-period]'
   });
 }
 
+for (const button of els.dayPeriodMenu?.querySelectorAll('[data-fixed-period]') || []) {
+  button.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    const selection = fixedPeriodRangesApi.normalizeDayMode(button.dataset.fixedPeriod);
+    setPeriodMenuOpen(false, { restoreFocus: true });
+    const changed = setPeriod(selection);
+    state.settings.periodDayMode = selection;
+    syncPeriodTabs();
+    syncPeriodMenu();
+    if (changed) {
+      state.rowSignature = '';
+      state.periodMotionActive = true;
+      render();
+      state.periodMotionActive = false;
+    }
+    await saveSettings({ periodDayMode: selection });
+  });
+}
+
 els.monthPeriodTab?.addEventListener('keydown', (event) => {
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
   event.preventDefault();
   setPeriodMenuOpen(true, { focus: event.key === 'ArrowUp' ? 'last' : 'first' });
+});
+
+els.dayPeriodTab?.addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  event.preventDefault();
+  setPeriodMenuOpen(true, { menu: 'day', focus: event.key === 'ArrowUp' ? 'last' : 'first' });
 });
 
 els.monthPeriodMenu?.addEventListener('keydown', (event) => {
@@ -12708,7 +12794,21 @@ els.monthPeriodMenu?.addEventListener('keydown', (event) => {
     setPeriodMenuOpen(false);
     return;
   }
-  const buttons = periodMenuButtons();
+  const buttons = periodMenuButtons('month');
+  const currentIndex = buttons.findIndex((button) => button === event.target);
+  fixedPeriodRangesApi.handlePeriodMenuNavigation(event, {
+    currentIndex,
+    itemCount: buttons.length,
+    focusIndex: focusPeriodMenuButton
+  });
+});
+
+els.dayPeriodMenu?.addEventListener('keydown', (event) => {
+  if (event.key === 'Tab') {
+    setPeriodMenuOpen(false);
+    return;
+  }
+  const buttons = periodMenuButtons('day');
   const currentIndex = buttons.findIndex((button) => button === event.target);
   fixedPeriodRangesApi.handlePeriodMenuNavigation(event, {
     currentIndex,
@@ -12728,7 +12828,9 @@ els.periodMonthModeInput?.addEventListener('change', async () => {
 
 document.addEventListener('click', (event) => {
   if (!state.periodMenuOpen) return;
-  if (els.monthPeriodMenu?.contains(event.target) || els.monthPeriodTab?.contains(event.target)) return;
+  const openMenu = state.periodMenuOpen === 'day' ? els.dayPeriodMenu : els.monthPeriodMenu;
+  const openTab = state.periodMenuOpen === 'day' ? els.dayPeriodTab : els.monthPeriodTab;
+  if (openMenu?.contains(event.target) || openTab?.contains(event.target)) return;
   setPeriodMenuOpen(false);
 });
 

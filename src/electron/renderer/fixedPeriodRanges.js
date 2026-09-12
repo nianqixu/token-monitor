@@ -4,13 +4,16 @@
   if (root) root.TokenMonitorFixedPeriodRanges = api;
 })(typeof window !== 'undefined' ? window : null, function createFixedPeriodRangesApi() {
   const MONTH_MODES = Object.freeze(['month', 'week', 'last7', 'last30']);
+  const DAY_MODES = Object.freeze(['today', 'yesterday', 'dayBefore']);
   const LABELS = Object.freeze({
     today: 'DAY',
     month: 'MONTH',
     allTime: 'TOTAL',
     week: 'WEEK',
     last7: '7D',
-    last30: '30D'
+    last30: '30D',
+    yesterday: '1D',
+    dayBefore: '2D'
   });
 
   function finiteNumber(value) {
@@ -56,6 +59,10 @@
     return MONTH_MODES.includes(value) ? value : 'month';
   }
 
+  function normalizeDayMode(value) {
+    return DAY_MODES.includes(value) ? value : 'today';
+  }
+
   function periodMenuTargetIndex(key, currentIndex, itemCount) {
     const count = Math.max(0, Math.floor(Number(itemCount) || 0));
     if (count === 0) return -1;
@@ -76,11 +83,14 @@
   }
 
   function isDerived(value) {
-    return value === 'week' || value === 'last7' || value === 'last30';
+    return value === 'week' || value === 'last7' || value === 'last30'
+      || value === 'yesterday' || value === 'dayBefore';
   }
 
   function slotForSelection(value) {
-    return isDerived(value) || value === 'month' ? 'month' : value;
+    if (value === 'yesterday' || value === 'dayBefore') return 'today';
+    if (isDerived(value) || value === 'month') return 'month';
+    return value;
   }
 
   function displayLabel(value) {
@@ -97,6 +107,8 @@
     }
     if (selection === 'last7') return { start: dayKeyAddDays(todayKey, -6), end: todayKey };
     if (selection === 'last30') return { start: dayKeyAddDays(todayKey, -29), end: todayKey };
+    if (selection === 'yesterday') return { start: dayKeyAddDays(todayKey, -1), end: dayKeyAddDays(todayKey, -1) };
+    if (selection === 'dayBefore') return { start: dayKeyAddDays(todayKey, -2), end: dayKeyAddDays(todayKey, -2) };
     return null;
   }
 
@@ -666,6 +678,7 @@
 
   return {
     MONTH_MODES,
+    DAY_MODES,
     createLatestRequestCoordinator,
     dailyForRange,
     dayKeyAddDays,
@@ -680,6 +693,7 @@
     joinDeviceHistorySources,
     localDayKey,
     handlePeriodMenuNavigation,
+    normalizeDayMode,
     normalizeMonthMode,
     periodMenuTargetIndex,
     readySnapshotForSelection,

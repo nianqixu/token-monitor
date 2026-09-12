@@ -52,6 +52,42 @@ test('fixed period slots keep the existing three-button layout', () => {
   assert.equal(ranges.displayLabel('last7'), '7D');
 });
 
+test('yesterday and day-before selections stay on the DAY slot as single-day history ranges', () => {
+  assert.equal(ranges.slotForSelection('yesterday'), 'today');
+  assert.equal(ranges.slotForSelection('dayBefore'), 'today');
+  assert.equal(ranges.isDerived('yesterday'), true);
+  assert.equal(ranges.isDerived('dayBefore'), true);
+  assert.equal(ranges.displayLabel('yesterday'), '1D');
+  assert.equal(ranges.displayLabel('dayBefore'), '2D');
+  assert.equal(ranges.normalizeDayMode('dayBefore'), 'dayBefore');
+  assert.equal(ranges.normalizeDayMode('week'), 'today');
+  assert.equal(ranges.normalizeDayMode(undefined), 'today');
+  assert.deepEqual(ranges.rangeForSelection('yesterday', { todayKey: '2026-08-12' }), { start: '2026-08-11', end: '2026-08-11' });
+  assert.deepEqual(ranges.rangeForSelection('dayBefore', { todayKey: '2026-08-12' }), { start: '2026-08-10', end: '2026-08-10' });
+});
+
+test('yesterday and day-before snapshots sum only their own history day', () => {
+  const daily = [day('2026-08-10', 5), day('2026-08-11', 10), day('2026-08-12', 20)];
+  const yesterday = ranges.fixedPeriodSnapshot('yesterday', {
+    historyAvailable: true,
+    historyEnabled: true,
+    todayKey: '2026-08-12',
+    daily
+  });
+  assert.equal(yesterday.status, 'ready');
+  assert.equal(yesterday.period.totalTokens, 10);
+  assert.deepEqual(yesterday.daily.map((row) => row.date), ['2026-08-11']);
+
+  const dayBefore = ranges.fixedPeriodSnapshot('dayBefore', {
+    historyAvailable: true,
+    historyEnabled: true,
+    todayKey: '2026-08-12',
+    daily
+  });
+  assert.equal(dayBefore.period.totalTokens, 5);
+  assert.deepEqual(dayBefore.daily.map((row) => row.date), ['2026-08-10']);
+});
+
 test('token component breakdown preserves known values and isolates the unknown remainder', () => {
   assert.deepEqual(ranges.tokenComponentBreakdown({
     totalTokens: 150,

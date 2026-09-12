@@ -2856,6 +2856,15 @@ html.is-windows .settings-panel select option {
   white-space: nowrap;
 }
 .cost { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.anchor-snapshot-banner {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .view-back-row {
   position: relative;
   z-index: 1;
@@ -5080,6 +5089,9 @@ html.is-windows .limit-live-badge {
 .period-menu.view-switcher-menu [data-fixed-period] {
   -webkit-app-region: no-drag;
   grid-template-columns: minmax(0, 1fr);
+}
+.period-menu.period-menu-day {
+  right: 90px;
 }
 .period-menu.hidden {
   /* Animates out rather than disappearing, so it must keep its box. Higher

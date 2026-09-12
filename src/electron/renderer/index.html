@@ -17,10 +17,15 @@
         <div class="title-controls">
           <nav class="tabs" aria-label="Period tabs">
             <span class="tab-indicator" aria-hidden="true"></span>
-            <button class="tab active" data-period="today" data-period-slot="today">DAY</button>
+            <button id="dayPeriodTab" class="tab active" data-period="today" data-period-slot="today" aria-haspopup="menu" aria-expanded="false">DAY</button>
             <button id="monthPeriodTab" class="tab" data-period="month" data-period-slot="month" aria-haspopup="menu" aria-expanded="false">MONTH</button>
             <button class="tab" data-period="allTime" data-period-slot="allTime">TOTAL</button>
           </nav>
+          <div id="dayPeriodMenu" class="view-switcher-menu period-menu period-menu-day hidden" role="menu" aria-labelledby="dayPeriodTab">
+            <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="today"><span class="view-switcher-menu-label" data-i18n="periodRange.today">Today</span></button>
+            <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="yesterday"><span class="view-switcher-menu-label" data-i18n="periodRange.yesterday">Yesterday</span></button>
+            <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="dayBefore"><span class="view-switcher-menu-label" data-i18n="periodRange.dayBefore">2 days ago</span></button>
+          </div>
           <div id="monthPeriodMenu" class="view-switcher-menu period-menu hidden" role="menu" aria-labelledby="monthPeriodTab">
             <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="month"><span class="view-switcher-menu-label" data-i18n="periodRange.month">This month</span></button>
             <button class="view-switcher-menu-item" type="button" role="menuitemradio" data-fixed-period="week"><span class="view-switcher-menu-label" data-i18n="periodRange.week">This week</span></button>
@@ -1695,6 +1700,7 @@
 
       <section class="total-panel">
         <div class="label-row"><span>TOTAL TOKENS</span></div>
+        <div id="anchorSnapshotBanner" class="anchor-snapshot-banner hidden" role="status"></div>
         <div class="total-number-row"><div id="totalTokens" class="total-number">0</div><div id="totalTokensCompact" class="total-compact hidden" aria-hidden="true"></div></div>
         <div id="cost" class="cost">$0.00</div>
       </section>

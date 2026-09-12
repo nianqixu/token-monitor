@@ -26,6 +26,17 @@ test('the middle-slot menu and Settings expose the same four fixed choices', () 
   assert.deepEqual([...setting.matchAll(/option value="([^"]+)"/g)].map((match) => match[1]), expected);
 });
 
+test('the day-slot menu exposes the today, yesterday, and day-before choices', () => {
+  const html = read('index.html');
+  const menu = html.slice(html.indexOf('id="dayPeriodMenu"'), html.indexOf('id="monthPeriodMenu"'));
+  assert.deepEqual([...menu.matchAll(/data-fixed-period="([^"]+)"/g)].map((match) => match[1]), ['today', 'yesterday', 'dayBefore']);
+  assert.match(html, /id="dayPeriodTab"[^>]*aria-haspopup="menu"[^>]*>DAY<\/button>/);
+  assert.match(html, /id="dayPeriodMenu" class="view-switcher-menu period-menu period-menu-day hidden"/);
+  for (const key of ['periodRange.today', 'periodRange.yesterday', 'periodRange.dayBefore']) {
+    assert.match(html, new RegExp(`data-i18n="${key}"`));
+  }
+});
+
 test('fixed-period menu follows the glass theme and keeps labels left aligned', () => {
   const html = read('index.html');
   const css = read('styles.css');
@@ -34,12 +45,12 @@ test('fixed-period menu follows the glass theme and keeps labels left aligned', 
   const boot = read('floatingBubbleBoot.js');
   assert.ok(html.indexOf('src="fixedPeriodRanges.js"') < html.indexOf('src="app.js"'));
   assert.match(html, /id="monthPeriodMenu" class="view-switcher-menu period-menu hidden"/);
-  assert.equal((html.match(/class="view-switcher-menu-item"/g) || []).length, 4);
+  assert.equal((html.match(/class="view-switcher-menu-item"/g) || []).length, 7);
   assert.match(css, /\.view-switcher-menu-item\s*\{[^}]*font-size:\s*11px;[^}]*text-align:\s*left;/s);
   assert.ok(css.lastIndexOf('.period-menu {') > css.indexOf('.view-switcher-menu {'));
   assert.match(css, /\.titlebar\.period-menu-open\s*\{\s*z-index:\s*13;/);
   assert.match(css, /\.period-menu\s*\{[^}]*-webkit-app-region:\s*no-drag;[^}]*pointer-events:\s*auto;/s);
-  assert.match(app, /closest\('\.titlebar'\)\?\.classList\.toggle\('period-menu-open', state\.periodMenuOpen\)/);
+  assert.match(app, /closest\('\.titlebar'\)\?\.classList\.toggle\('period-menu-open', Boolean\(next\)\)/);
   assert.match(app, /button\.classList\.toggle\('is-current', active\)/);
   assert.match(app, /handlePeriodMenuNavigation\(event/);
   assert.match(app, /setPeriodMenuOpen\(true, \{ focus: event\.key === 'ArrowUp' \? 'last' : 'first' \}\)/);
@@ -65,7 +76,10 @@ test('fixed-period menu follows the glass theme and keeps labels left aligned', 
   assert.match(app, /force: forceFixedPeriodHistory,[\s\S]*?retryFailed: forceFixedPeriodHistory/);
   assert.match(app, /isDerived\(next\) && state\.fixedPeriodHistoryFailed[\s\S]*?warmFixedPeriodHistory\(\{ retryFailed: true, renderOnComplete: true \}\)/);
   assert.match(app, /fixedPeriodHistorySignature !== signature[\s\S]*?\|\| state\.fixedPeriodHistoryBusy\) \{[\s\S]*?void loadFixedPeriodHistory\(\);/);
-  assert.match(boot, /\['today', 'month', 'week', 'last7', 'last30', 'allTime'\]\.includes\(period\)/);
+  assert.match(boot, /\['today', 'yesterday', 'dayBefore', 'month', 'week', 'last7', 'last30', 'allTime'\]\.includes\(period\)/);
+  assert.match(app, /setPeriodMenuOpen\(state\.periodMenuOpen !== 'day', \{ menu: 'day', focus: state\.periodMenuOpen === 'day' \? '' : 'current' \}\)/);
+  assert.match(app, /normalizeDayMode\(state\.settings\?\.periodDayMode\)/);
+  assert.match(app, /saveSettings\(\{ periodDayMode: selection \}\)/);
   assert.match(app, /function fixedPeriodDevices\(\)/);
   assert.match(app, /devicesForReadySnapshot\(state\.fixedPeriodSnapshot, state\.period\)/);
   assert.match(app, /fixedPeriodSnapshotFromDevices\(state\.period, fixedPeriodSources\(\)/);
@@ -100,9 +114,9 @@ test('the Settings default uses the standard title-control-description row', () 
   assert.match(i18n, /'periodRange\.settingsNote': '選擇主畫面預設顯示的統計範圍。也可在主畫面再次點擊上方目前選取的時段，開啟選單快速切換。'/);
 });
 
-test('cold-start boot restores every fixed middle-slot selection', () => {
+test('cold-start boot restores every fixed slot selection', () => {
   const boot = read('floatingBubbleBoot.js');
-  for (const period of ['week', 'last7', 'last30']) {
+  for (const period of ['yesterday', 'dayBefore', 'week', 'last7', 'last30']) {
     const window = { location: { search: `?period=${period}&breakdown=home` } };
     const document = { documentElement: { classList: { add() {} } } };
     vm.runInNewContext(boot, { document, URLSearchParams, window });
