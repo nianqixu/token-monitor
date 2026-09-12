@@ -312,3 +312,19 @@ test('view switcher actions are localized', () => {
   assert.equal(translate('zh-TW', 'views.backHome'), '返回主頁');
   assert.equal(translate('zh-CN', 'views.backHome'), '返回主页');
 });
+
+test('the anchor snapshot banner is localized with its time placeholder in every locale', () => {
+  for (const locale of LANGUAGE_OPTIONS.map((option) => option.value).filter((value) => value !== 'auto')) {
+    const message = MESSAGES[locale]['dashboard.anchorSnapshot'];
+    assert.ok(message, locale);
+    assert.match(message, /\{time\}/, locale);
+  }
+  assert.equal(
+    translate('zh-CN', 'dashboard.anchorSnapshot', { time: '9/10 23:58' }),
+    '快照数据 · 截至 9/10 23:58,首次采集中'
+  );
+  assert.equal(
+    translate('en', 'dashboard.anchorSnapshot', { time: '9/10, 11:58 PM' }),
+    'Snapshot · as of 9/10, 11:58 PM — first scan in progress'
+  );
+});

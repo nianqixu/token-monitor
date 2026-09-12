@@ -1,6 +1,6 @@
 'use strict';
 
-const { collectorAnchorTrust, computePeriodWindows, qoderCnDbPathForClients } = require('./collector');
+const { collectorAnchorTrust, collectorSnapshotTrust, computePeriodWindows, qoderCnDbPathForClients } = require('./collector');
 const { mergePeriods } = require('./usage');
 const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessionGuard');
 
@@ -18,23 +18,7 @@ const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessio
 // being replaced. Seeding then adds one rule of its own, below.
 // Returns a device record, or null when the anchor cannot be used.
 function deviceRecordFromAnchor(saved, options = {}) {
-  const {
-    envelope = {},
-    clients = '',
-    allTimeSince = '',
-    projectsEnabled = true,
-    qoderCnDbPath: qoderCnDbPathOption,
-    homeDir,
-    wslScanEnabled = true,
-    wslSupported = false,
-    hostname = '',
-    platform = '',
-    now = new Date()
-  } = options;
-  const qoderCnDbPath = qoderCnDbPathOption === undefined
-    ? qoderCnDbPathForClients(clients, { homeDir })
-    : qoderCnDbPathOption;
-  const trust = collectorAnchorTrust(saved, { clients, allTimeSince, projectsEnabled, qoderCnDbPath, now });
+  const trust = collectorAnchorTrust(saved, anchorTrustOptions(options));
   if (!trust) return null;
   // The seed's own rule, and the one place it is stricter than the collector.
   // A capture time the collector cannot trust only costs it a full scan, but
@@ -42,9 +26,62 @@ function deviceRecordFromAnchor(saved, options = {}) {
   // archive projection is evaluated at, so a snapshot of unknown age must not
   // be presented as one taken now.
   if (trust.capturedAtMs === null) return null;
+  return anchorDeviceRecord(saved, options, trust);
+}
+
+// The cross-day variant: same integrity rules, same record shape, but the
+// same-local-day requirement is replaced by collectorSnapshotTrust, so an
+// anchor captured on an earlier day can seed the display too. The periods it
+// returns belong to that earlier day — the caller must surface the snapshot
+// metadata alongside the record so the UI can label them, which is what keeps
+// yesterday's `today` from reading as the current day's total. Returns
+// { record, snapshot: { dateKey, capturedAt } } or null.
+function deviceRecordFromSnapshotAnchor(saved, options = {}) {
+  const trust = collectorSnapshotTrust(saved, anchorTrustOptions(options));
+  if (!trust) return null;
+  // Same reasoning as the same-day path: the capture time drives updatedAt and
+  // the archive projection, so an untrustworthy one disqualifies the seed.
+  if (trust.capturedAtMs === null) return null;
+  const record = anchorDeviceRecord(saved, options, trust);
+  if (!record) return null;
+  return {
+    record,
+    snapshot: { dateKey: trust.dateKey, capturedAt: record.updatedAt }
+  };
+}
+
+function anchorTrustOptions(options) {
+  const {
+    clients = '',
+    allTimeSince = '',
+    projectsEnabled = true,
+    qoderCnDbPath: qoderCnDbPathOption,
+    homeDir,
+    now = new Date()
+  } = options;
+  const qoderCnDbPath = qoderCnDbPathOption === undefined
+    ? qoderCnDbPathForClients(clients, { homeDir })
+    : qoderCnDbPathOption;
+  return { clients, allTimeSince, projectsEnabled, qoderCnDbPath, now };
+}
+
+function anchorDeviceRecord(saved, options, trust) {
+  const {
+    envelope = {},
+    clients = '',
+    allTimeSince = '',
+    projectsEnabled = true,
+    wslScanEnabled = true,
+    wslSupported = false,
+    hostname = '',
+    platform = '',
+    now = new Date()
+  } = options;
   // The anchor keeps host periods and the WSL bundle apart, the way
-  // collectUsageOnce does before summing them. Same local day is established
-  // above, so all three windows are safe to merge.
+  // collectUsageOnce does before summing them. The same-day seed has anchor day
+  // == current day established by the trust check; the cross-day snapshot keeps
+  // host and WSL windows consistent with each other instead — both captured on
+  // the snapshot's day — which is the pairing the merge actually needs.
   const wsl = wslScanEnabled !== false ? saved.wslBundle : null;
   const cleanPeriod = (period) => {
     if (!period || typeof period !== 'object' || !Object.prototype.hasOwnProperty.call(period, 'sessions')) return period;
@@ -79,6 +116,11 @@ function deviceRecordFromAnchor(saved, options = {}) {
     // comparing UTC days, and anywhere ahead of UTC a local day that has not
     // rolled over in UTC yet reads as an expired window: today's tokens get
     // dropped and the card shows the zero this whole path exists to avoid.
+    // Windows are computed at `now`, not at the snapshot: isPeriodExpired drops
+    // a period whose window has ended, so a cross-day snapshot carrying its own
+    // day's windows would be discarded by the very aggregation it feeds. The
+    // day mismatch is carried by the snapshot metadata instead, and labeling
+    // the UI is what keeps those periods honest.
     periodWindows: computePeriodWindows(now),
     today: withWsl(saved.today, wsl?.today),
     month: withWsl(saved.month, wsl?.month),
@@ -89,5 +131,6 @@ function deviceRecordFromAnchor(saved, options = {}) {
 }
 
 module.exports = {
-  deviceRecordFromAnchor
+  deviceRecordFromAnchor,
+  deviceRecordFromSnapshotAnchor
 };

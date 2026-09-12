@@ -85,7 +85,7 @@ const {
   antigravitySyncLockPath,
   repairAntigravitySyncLock
 } = require('../shared/providers/antigravity/selfSync');
-const { deviceRecordFromAnchor } = require('../shared/anchorSeed');
+const { deviceRecordFromAnchor, deviceRecordFromSnapshotAnchor } = require('../shared/anchorSeed');
 const { sendWhenRendererReady } = require('./deferredWindowSend');
 const { applyInitialLimitProviderSeed } = require('./initialLimitProviderSeed');
 const { createDeviceRuntime } = require('../shared/deviceRuntime');
@@ -443,9 +443,14 @@ if (!gotLock) app.exit(0);
 const HOME_LIMIT_ACCOUNT_COUNT_DEFAULT = 3;
 const HOME_LIMIT_ACCOUNT_COUNT_MAX = 12;
 const PERIOD_MONTH_MODES = new Set(['month', 'week', 'last7', 'last30']);
+const PERIOD_DAY_MODES = new Set(['today', 'yesterday', 'dayBefore']);
 
 function normalizePeriodMonthMode(value) {
   return PERIOD_MONTH_MODES.has(value) ? value : 'month';
+}
+
+function normalizePeriodDayMode(value) {
+  return PERIOD_DAY_MODES.has(value) ? value : 'today';
 }
 
 function normalizeHomeLimitAccountCount(value) {
@@ -498,6 +503,7 @@ function defaultSettings() {
     modelRankingMetric: 'tokens',
     homeActiveDaysWindow: 'all',
     periodMonthMode: 'month',
+    periodDayMode: 'today',
     themeColors: {},
     vendorColors: {},
     interfaceFontFamily: '',
@@ -2479,6 +2485,7 @@ function readSettings() {
     }
     merged.homeLimitAccountCount = normalizeHomeLimitAccountCount(merged.homeLimitAccountCount);
     merged.periodMonthMode = normalizePeriodMonthMode(merged.periodMonthMode);
+    merged.periodDayMode = normalizePeriodDayMode(merged.periodDayMode);
     if (saved.historyEnabled !== undefined) {
       merged.historyEnabled = parseBoolean(saved.historyEnabled, false);
     }
@@ -4329,6 +4336,13 @@ function refreshTrayContextMenu() {
   if (typeof tray.refreshContextMenu === 'function') tray.refreshContextMenu();
 }
 
+function traySnapshotLabel(stats) {
+  const at = new Date(stats?.anchorSnapshot?.capturedAt || '');
+  if (Number.isNaN(at.getTime())) return '';
+  const pad = (value) => String(value).padStart(2, '0');
+  return `snapshot ${at.getMonth() + 1}-${at.getDate()} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
 function updateTrayDisplay() {
   if (!tray || tray.isDestroyed()) return;
   // Keep the exported D-Bus menu in sync (radio checks, refresh state, Codex
@@ -4352,9 +4366,13 @@ function updateTrayDisplay() {
   const customImageMode = mode === 'custom' && providerTrayIcons.custom;
   const text = trayImageMode || customImageMode ? '' : limitText;
   if (trayShowsTitle(process.platform)) tray.setTitle(text);
-  // Tooltip always shows a useful summary, even in icon-only mode where setTitle is blank.
+  // The cross-day anchor seed publishes real totals whose "today" is the
+  // snapshot's day, not the reader's. The panel labels that with a banner; the
+  // tooltip is the only place the tray can carry the same caveat, so the title
+  // keeps its compact form and the caveat lives one hover away.
+  const snapshotNote = traySnapshotLabel(latestStats);
   const tip = formatTrayText(visibleStats, 'both', currency, compactOptions);
-  tray.setToolTip(`Token Monitor - ${tip}`);
+  tray.setToolTip(`Token Monitor - ${tip}${snapshotNote ? ` (${snapshotNote})` : ''}`);
   // Icon: rendered bars image in bar modes, otherwise the app icon.
   let icon = null;
   if (barsImageMode || trayImageMode || customImageMode) {
@@ -4405,30 +4423,45 @@ function stopLocalCollector(options = {}) {
 // Show the last full scan's totals while the first one of this run is still
 // going, instead of zeros for the tens of seconds it takes. deviceRecordFromAnchor
 // owns the trust rules; anything it rejects leaves the renderer on its normal
-// wait-for-real-data path.
+// wait-for-real-data path — except one case: an anchor captured on an earlier
+// day. That is exactly the after-a-reboot morning where the first scan is
+// slowest and the panel would otherwise sit at zero for minutes, so it falls
+// back to deviceRecordFromSnapshotAnchor and republishes the snapshot with
+// `anchorSnapshot` attached; the renderer labels it until the first real scan
+// replaces it. Anything the snapshot rules reject too still gets nothing.
 function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
   // Cold start only. startMode() re-enters here on structural settings changes
   // as well, and there the numbers already collected are newer than any anchor.
   if (lastCollectedDevice) return;
-  const deviceRecord = deviceRecordFromAnchor(
-    readJson(path.join(sharedDataDir(), 'collector-anchor.json'), null),
-    {
-      envelope: electronDeviceEnvelope(),
-      clients: usageOptions.clients,
-      allTimeSince: usageOptions.allTimeSince,
-      projectsEnabled: usageOptions.projectsEnabled,
-      wslScanEnabled: usageOptions.wslScanEnabled,
-      wslSupported: process.platform === 'win32',
-      hostname: os.hostname(),
-      platform: `${process.platform}-${process.arch}`
+  const anchorOptions = {
+    envelope: electronDeviceEnvelope(),
+    clients: usageOptions.clients,
+    allTimeSince: usageOptions.allTimeSince,
+    projectsEnabled: usageOptions.projectsEnabled,
+    wslScanEnabled: usageOptions.wslScanEnabled,
+    wslSupported: process.platform === 'win32',
+    hostname: os.hostname(),
+    platform: `${process.platform}-${process.arch}`
+  };
+  const savedAnchor = readJson(path.join(sharedDataDir(), 'collector-anchor.json'), null);
+  let deviceRecord = deviceRecordFromAnchor(savedAnchor, anchorOptions);
+  let anchorSnapshot = null;
+  if (!deviceRecord) {
+    const snapshot = deviceRecordFromSnapshotAnchor(savedAnchor, anchorOptions);
+    if (snapshot) {
+      deviceRecord = snapshot.record;
+      anchorSnapshot = snapshot.snapshot;
     }
-  );
+  }
   if (!deviceRecord) return;
   // The anchor holds raw collector output, while everything the renderer is ever
   // shown has been through the archives first. Project the same way or the seed
   // reads low for anyone with an un-tracked client or retained sessions, and then
   // jumps when the first scan lands. Read-only on purpose: the capture step
-  // records a fresh observation, and an anchor from hours ago is not one.
+  // records a fresh observation, and an anchor from hours ago is not one. The
+  // projection evaluates at the record's receivedAt — the snapshot's capture
+  // time — so a cross-day seed unions the archived sessions of the snapshot's
+  // day, not of the day it is being shown on.
   const visible = summaryWithArchivesApplied(
     deviceRecord,
     settings?.sessionUsageArchiveEnabled === false ? null : ensureSessionUsageArchiveLoaded(),
@@ -4436,6 +4469,7 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
   );
   localDevice = visible;
   localStats = withHistoryPreview(aggregateDevices([visible], 0), [visible]);
+  if (anchorSnapshot) localStats.anchorSnapshot = anchorSnapshot;
   // Through the normal publisher, not straight to the renderer: the tray reads
   // what sendPush sets, and in tray mode the window is hidden, so a seed that
   // only reached the renderer would leave the one visible surface on zero.
@@ -4445,7 +4479,12 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
   // interval this run's first live scan needs on a snapshot it is republishing.
   sendPush({
     event: 'stats',
-    data: { type: 'stats', reason: 'anchor', stats: localStats, at: deviceRecord.receivedAt }
+    data: {
+      type: 'stats',
+      reason: anchorSnapshot ? 'anchor-snapshot' : 'anchor',
+      stats: localStats,
+      at: deviceRecord.receivedAt
+    }
   }, { skipExport: true, deferToRenderer: true, widgetProducerOwner });
 }
 
@@ -6914,6 +6953,7 @@ app.whenReady().then(() => {
       hiddenHomeLimitProviders: patch.hiddenHomeLimitProviders !== undefined ? normalizeHiddenLimitProviders(patch.hiddenHomeLimitProviders) : normalizeHiddenLimitProviders(settings.hiddenHomeLimitProviders),
       homeLimitAccountCount: normalizeHomeLimitAccountCount(patch.homeLimitAccountCount ?? settings.homeLimitAccountCount),
       periodMonthMode: normalizePeriodMonthMode(patch.periodMonthMode ?? settings.periodMonthMode),
+      periodDayMode: normalizePeriodDayMode(patch.periodDayMode ?? settings.periodDayMode),
       modelRankingMetric: normalizeRankingMetric(patch.modelRankingMetric ?? settings.modelRankingMetric),
       historyEnabled: parseBoolean(patch.historyEnabled ?? settings.historyEnabled, false),
       projectsEnabled: parseBoolean(patch.projectsEnabled ?? settings.projectsEnabled, true),

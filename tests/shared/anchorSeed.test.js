@@ -8,7 +8,7 @@ process.env.TZ = 'Asia/Shanghai';
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { deviceRecordFromAnchor } = require('../../src/shared/anchorSeed');
+const { deviceRecordFromAnchor, deviceRecordFromSnapshotAnchor } = require('../../src/shared/anchorSeed');
 const { configFingerprint } = require('../../src/shared/collector');
 const { qoderCnDataPaths } = require('../../src/shared/providers/qodercn/usage');
 const { aggregateDevices, emptyPeriod } = require('../../src/shared/usage');
@@ -206,4 +206,67 @@ test('the seeded totals survive aggregation once the UTC day has rolled over', (
   delete withoutWindows.periodWindows;
   const bare = aggregateDevices([withoutWindows], 0, NOW.getTime());
   assert.equal(bare.periods.today.totalTokens, 0, 'guards the fallback this test exists for');
+});
+
+test('a cross-day anchor seeds as a labeled snapshot', () => {
+  // The morning-after case: the machine shut down yesterday evening and the
+  // first full scan of the new day is still running. Yesterday's anchor is
+  // exactly the data worth showing — the caller labels it via snapshot.
+  const seeded = deviceRecordFromSnapshotAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions());
+  assert.ok(seeded);
+  assert.deepEqual(seeded.snapshot, { dateKey: '2026-08-07', capturedAt: FULL_SCAN_AT });
+  assert.equal(seeded.record.today.totalTokens, 1_000);
+  assert.equal(seeded.record.month.totalTokens, 30_000);
+  assert.equal(seeded.record.allTime.totalTokens, 900_000);
+  // Shape parity with the same-day seed: the record replacing it must not look
+  // different to anything downstream.
+  assert.equal(seeded.record.deviceId, 'device-a');
+  assert.equal(seeded.record.hostname, 'host-a');
+  assert.equal(seeded.record.updatedAt, FULL_SCAN_AT);
+  assert.equal(seeded.record.periodWindows.today.key, '2026-08-08');
+});
+
+test('snapshot periods survive aggregation on a later day', () => {
+  // The record's windows are computed at `now`, not at the snapshot: windows
+  // from the snapshot's own day would read as expired and aggregateDevices
+  // would drop every period — the seed would show zeros with a banner on top.
+  // The day mismatch is carried by the snapshot metadata instead, which is what
+  // the UI label is built from.
+  const seeded = deviceRecordFromSnapshotAnchor(anchorFixture({ dateKey: '2026-08-07' }), seedOptions());
+  const aggregated = aggregateDevices([seeded.record], 0, NOW.getTime());
+  assert.equal(aggregated.periods.today.totalTokens, 1_000);
+  assert.equal(aggregated.periods.month.totalTokens, 30_000);
+  assert.equal(aggregated.periods.allTime.totalTokens, 900_000);
+});
+
+test('a snapshot with the same flaws as an anchor is refused too', () => {
+  const base = { dateKey: '2026-08-07' };
+  assert.equal(deviceRecordFromSnapshotAnchor(null, seedOptions()), null);
+  assert.equal(deviceRecordFromSnapshotAnchor(anchorFixture({ ...base, dateKey: undefined }), seedOptions()), null);
+  assert.equal(deviceRecordFromSnapshotAnchor(anchorFixture({ ...base, month: null }), seedOptions()), null);
+  assert.equal(deviceRecordFromSnapshotAnchor(anchorFixture({ ...base, fullScanAt: 'not-a-timestamp' }), seedOptions()), null);
+
+  const future = new Date(NOW.getTime() + 60_000).toISOString();
+  assert.equal(deviceRecordFromSnapshotAnchor(anchorFixture({ ...base, fullScanAt: future }), seedOptions()), null);
+
+  // Config drift poisons a snapshot just like it poisons a same-day anchor: the
+  // totals belong to a client set the collector no longer runs.
+  assert.equal(deviceRecordFromSnapshotAnchor(anchorFixture(base), seedOptions({ clients: 'claude' })), null);
+});
+
+test('the snapshot seed merges the WSL bundle the same way', () => {
+  const wslBundle = { today: periodWith(400), month: periodWith(9_000), allTime: periodWith(100_000) };
+  const seeded = deviceRecordFromSnapshotAnchor(
+    anchorFixture({ dateKey: '2026-08-07', wslBundle }),
+    seedOptions()
+  );
+  assert.equal(seeded.record.today.totalTokens, 1_400);
+  assert.equal(seeded.record.month.totalTokens, 39_000);
+  assert.equal(seeded.record.allTime.totalTokens, 1_000_000);
+
+  const hostOnly = deviceRecordFromSnapshotAnchor(
+    anchorFixture({ dateKey: '2026-08-07', wslBundle }),
+    seedOptions({ wslScanEnabled: false })
+  );
+  assert.equal(hostOnly.record.today.totalTokens, 1_000);
 });

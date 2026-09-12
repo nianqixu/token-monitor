@@ -3043,6 +3043,24 @@ function collectorAnchorTrust(saved, options = {}) {
   return { capturedAtMs };
 }
 
+// The cold-start seed's cross-day cousin of collectorAnchorTrust. Everything
+// that protects reuse of the periods as incremental-derivation input carries
+// over — shape, config fingerprint, a parseable capture time that is not in the
+// future — because a snapshot the collector would discard for those reasons
+// would show the wrong configuration's totals. Only the same-local-day rule is
+// dropped: it exists so `today` stays derivable, which does not apply to a
+// payload that is explicitly labeled with the day it was captured on. Returns
+// { capturedAtMs, dateKey } or null.
+function collectorSnapshotTrust(saved, options = {}) {
+  const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', now = new Date() } = options;
+  if (!saved || typeof saved !== 'object') return null;
+  if (!saved.dateKey || !saved.today || !saved.month || !saved.allTime) return null;
+  if (saved.configFingerprint !== configFingerprint(clients, allTimeSince, projectsEnabled, qoderCnDbPath)) return null;
+  const parsed = Date.parse(saved.fullScanAt || '');
+  const capturedAtMs = Number.isFinite(parsed) && parsed <= now.getTime() ? parsed : null;
+  return { capturedAtMs, dateKey: String(saved.dateKey) };
+}
+
 // Force a full scan at least this often even when the anchor is otherwise
 // valid, so a long-running session periodically rescans month/allTime
 // and picks up any changes that the delta-derivation might miss.
@@ -4060,6 +4078,7 @@ module.exports = {
   clientWatchCandidates,
   computePeriodWindows,
   collectorAnchorTrust,
+  collectorSnapshotTrust,
   configFingerprint,
   qoderCnDbPathForClients,
   deriveClientHealth,
