@@ -212,13 +212,6 @@ function buildSyncPayload(summary, {
   delete payload.allTimeProjectsIncomplete;
   delete payload.sessionDetailsOmitted;
   delete payload.periodProjectsOmitted;
-  if (summary.history && typeof summary.history === 'object') {
-    payload.history = { ...summary.history };
-    if (summary.history.summary && typeof summary.history.summary === 'object') {
-      payload.history.summary = { ...summary.history.summary };
-    }
-    if (Array.isArray(payload.history.dailyTotals)) delete payload.history.dailyTotalsOmitted;
-  }
 
   for (const periodName of ['today', 'month']) {
     const period = summary[periodName];
