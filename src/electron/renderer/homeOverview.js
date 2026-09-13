@@ -276,6 +276,20 @@
     return Math.max(0, summaryPeak || 0, dailyPeak);
   }
 
+  function homeActiveDaysPresentation({ requestedWindow = 'all', summary = {}, cells = [] } = {}) {
+    const rollingCount = (Array.isArray(cells) ? cells : [])
+      .reduce((count, cell) => count + (Math.max(0, finiteNumber(cell?.tokens) || 0) > 0 ? 1 : 0), 0);
+    const allTimeCount = finiteNumber(summary?.activeDays);
+    if (
+      requestedWindow === 'all'
+      && summary?.activeDaysComplete === true
+      && allTimeCount != null
+    ) {
+      return { window: 'all', count: Math.max(0, Math.round(allTimeCount)) };
+    }
+    return { window: 'year', count: rollingCount };
+  }
+
   function homeActivityHeatmapLayout() {
     return { cell: 9, gap: 3, radius: 2 };
   }
@@ -474,6 +488,7 @@
     homeActivityWheelRoute,
     homeActivityScrollTarget,
     homeActivityScrollRecord,
+    homeActiveDaysPresentation,
     remainingPercent,
     usedPercent
   };

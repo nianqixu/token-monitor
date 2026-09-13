@@ -1372,7 +1372,16 @@ function aggregateHistory(devices, options = {}) {
     // periodWindows.today.key, and isPeriodExpired's periodWindows/date reads)
     // is normalized without rebuilding the period trees.
     const normalized = normalizeDeviceRecordCore(record);
-    if (!hasOwn(normalized, 'history') || normalized.history === null) continue;
+    if (!hasOwn(normalized, 'history') || normalized.history === null) {
+      // A legacy/history-disabled device with all-time usage may own active
+      // dates absent from the histories we can merge. Include an incomplete
+      // sentinel so mixed-version hubs never advertise an exact lifetime count.
+      const allTimeTokens = Number(record.allTime?.totalTokens ?? record.periods?.allTime?.totalTokens ?? 0);
+      if (allTimeTokens > 0) {
+        histories.push({ daily: [], monthly: [], summary: { activeDaysComplete: false } });
+      }
+      continue;
+    }
     histories.push(normalized.history);
     if (!normalized.history.daily.length) continue;
     const reported = calendarDayKey(normalized.periodWindows?.today?.key);
