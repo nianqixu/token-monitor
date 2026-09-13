@@ -45,7 +45,7 @@ test('every Electron collector mode yields daily-history writes to an external a
 
 test('every Electron collector mode reads live GUI custom pricing', () => {
   assert.match(main, /getCustomModelPricing:\s*\(\) => settings\.customModelPricing \|\| \[\]/);
-  assert.equal((main.match(/usageOptions:\s*electronUsageConfig\(/g) || []).length, 3);
+  assert.equal((main.match(/const usageOptions = electronUsageConfig\(/g) || []).length, 3);
 });
 
 test('clearing retained session usage also clears retained daily history', () => {

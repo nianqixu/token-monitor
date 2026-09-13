@@ -37,10 +37,14 @@ function normalizeCustomPricingSetting(value) {
 // provider-reported costs as authoritative for some clients, so writing its
 // custom-pricing.json alone cannot guarantee an override. This resolver mirrors
 // tokscale's pricing buckets and is applied before Token Monitor aggregates the
-// row into periods, models, clients, and sessions.
+// row into periods, models, clients, and sessions. Rows without a positive
+// input or output price are skipped — tokscale would ignore them too, so they
+// must not turn the resolver into an all-models free pass.
 function createCustomPricingCostResolver(settingValue) {
   const byModel = new Map();
   for (const entry of normalizeCustomPricingSetting(settingValue)) {
+    const hasPriceBasis = (entry.inputPerM ?? 0) > 0 || (entry.outputPerM ?? 0) > 0;
+    if (!hasPriceBasis) continue;
     byModel.set(entry.modelId.toLowerCase(), entry);
   }
   if (byModel.size === 0) return null;
