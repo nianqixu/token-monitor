@@ -19,6 +19,7 @@ const { createTokscaleCapabilityResolver, filterSupportedClients, parseSupported
 const { customPricingPath, tokscaleCacheDirs, tokscaleConfigDir, tokscaleHomeDir } = require('./tokscaleConfig');
 const { normalizeCustomScanPaths, tokscaleExtraDirsEnv } = require('./customScanPaths');
 const { TOKSCALE_CLIENT_ALIASES, tokscaleScanClientIds } = require('./tokscaleClientMapping');
+const { createCustomPricingCostResolver, normalizeCustomPricingSetting } = require('./tokscaleCustomPricing');
 const {
   applyPeriodDelta,
   emptyPeriod,
@@ -1045,6 +1046,8 @@ async function collectUsageOnce(options) {
     ? hostOsInfo()
     : normalizeOsInfo(options.osInfo);
   const normalizedClients = normalizeClientsCsv(clients);
+  const costResolver = createCustomPricingCostResolver(options.customModelPricing);
+  const extractUsage = (json) => extractUsageFromTokscale(json, { costResolver });
   const localSessionMetadataDeps = {
     ...(options.sessionMetadataDeps || {}),
     metadataCache: new Map(),
@@ -1137,9 +1140,9 @@ async function collectUsageOnce(options) {
         });
         const promaJson = buildPromaPeriods({ now: collectedAt, allTimeSince, rows: promaRows, pricingByModel: promaPricing });
         promaPeriods = {
-          today: extractUsageFromTokscale(promaJson.today),
-          month: extractUsageFromTokscale(promaJson.month),
-          allTime: extractUsageFromTokscale(promaJson.allTime)
+          today: extractUsage(promaJson.today),
+          month: extractUsage(promaJson.month),
+          allTime: extractUsage(promaJson.allTime)
         };
       } catch (err) {
         if (typeof options.logger === 'function') options.logger(`proma parse failed: ${err.message}`);
@@ -1156,9 +1159,9 @@ async function collectUsageOnce(options) {
         });
         const qoderCnJson = buildQoderCnPeriods({ now: collectedAt, allTimeSince, rows: qoderCnRows, pricingByModel: qoderCnPricing });
         qoderCnPeriods = {
-          today: extractUsageFromTokscale(qoderCnJson.today),
-          month: extractUsageFromTokscale(qoderCnJson.month),
-          allTime: extractUsageFromTokscale(qoderCnJson.allTime)
+          today: extractUsage(qoderCnJson.today),
+          month: extractUsage(qoderCnJson.month),
+          allTime: extractUsage(qoderCnJson.allTime)
         };
       } catch (err) {
         if (typeof options.logger === 'function') options.logger(`qodercn parse failed: ${err.message}`);
@@ -1181,7 +1184,7 @@ async function collectUsageOnce(options) {
       if (scanClients) {
         const todayJson = await runTokscaleFn({ clients: scanClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
         throwIfAborted(options.signal);
-        const bundle = extractUsageBundleFromTokscale(todayJson);
+        const bundle = extractUsageBundleFromTokscale(todayJson, { costResolver });
         freshPartitions = bundle.byClient;
         const unattributed = freshPartitions[UNATTRIBUTED_USAGE_CLIENT];
         const attributedClients = Object.keys(freshPartitions).filter((client) => client !== UNATTRIBUTED_USAGE_CLIENT);
@@ -1206,7 +1209,7 @@ async function collectUsageOnce(options) {
           // anchor partition. Rebuild the complete today snapshot instead.
           const fullTodayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
           throwIfAborted(options.signal);
-          freshPartitions = extractUsageBundleFromTokscale(fullTodayJson).byClient;
+          freshPartitions = extractUsageBundleFromTokscale(fullTodayJson, { costResolver }).byClient;
           useTargetedPartitions = false;
         } else if (targetRequested) {
           // Empty tokscale output uses the unattributed fallback shape. Keep the
@@ -1246,19 +1249,19 @@ async function collectUsageOnce(options) {
       // is what let the issue #15 self-trigger loop spike tokscale past 500% CPU.
       const todayJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--today'], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      const todayBundle = extractUsageBundleFromTokscale(todayJson);
+      const todayBundle = extractUsageBundleFromTokscale(todayJson, { costResolver });
       today = todayBundle.period;
       todayPartitions = todayBundle.byClient;
       if (typeof options.onProgress === 'function') decorateLocalPeriods({ today });
       emitProgress({ today });
       const monthJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--month'], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      month = extractUsageFromTokscale(monthJson);
+      month = extractUsage(monthJson);
       if (typeof options.onProgress === 'function') decorateLocalPeriods({ today, month });
       emitProgress({ today, month });
       const allTimeJson = await runTokscaleFn({ clients: tokscaleClients, flags: ['--since', allTimeSince], commandTimeoutMs, signal: options.signal });
       throwIfAborted(options.signal);
-      allTime = extractUsageFromTokscale(allTimeJson);
+      allTime = extractUsage(allTimeJson);
     }
     // Always decorate: session timestamps drive the recency sort regardless of the
     // Projects opt-out (issue #182). decorateLocalPeriods gates only project identity
@@ -1323,6 +1326,7 @@ async function collectUsageOnce(options) {
           commandTimeoutMs: options.pricingTimeoutMs ?? Math.min(commandTimeoutMs || PROMA_PRICING_LOOKUP_TIMEOUT_MS, PROMA_PRICING_LOOKUP_TIMEOUT_MS),
           pricingRevision: options.pricingRevision
         }),
+        costResolver,
         logger: options.logger,
         decoratePeriods: (periods, home) => applySessionMetadata(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
       });
@@ -1344,6 +1348,7 @@ async function collectUsageOnce(options) {
           commandTimeoutMs: options.pricingTimeoutMs ?? Math.min(commandTimeoutMs || PROMA_PRICING_LOOKUP_TIMEOUT_MS, PROMA_PRICING_LOOKUP_TIMEOUT_MS),
           pricingRevision: options.pricingRevision
         }),
+        costResolver,
         logger: options.logger,
         decoratePeriods: (periods, home) => applySessionMetadata(periods, home, { scopedHome: true, resolveProjects: projectsEnabled })
       });
@@ -2702,12 +2707,37 @@ function canTargetTodayPartitions(anchor, targetClients) {
   );
 }
 
-function configFingerprint(clientsCsv, allTimeSince, projectsEnabled = true, qoderCnDbPath = '') {
+function resolveCustomModelPricing(value, logger) {
+  try {
+    return typeof value === 'function' ? value() : value;
+  } catch (error) {
+    if (typeof logger === 'function') logger(`custom pricing read failed: ${error.message}`);
+    return [];
+  }
+}
+
+function customPricingFingerprint(value) {
+  const byModel = new Map();
+  for (const entry of normalizeCustomPricingSetting(value)) {
+    const modelId = entry.modelId.toLowerCase();
+    byModel.set(modelId, {
+      modelId,
+      inputPerM: entry.inputPerM,
+      outputPerM: entry.outputPerM,
+      cacheReadPerM: entry.cacheReadPerM
+    });
+  }
+  return [...byModel.values()].sort((left, right) => left.modelId.localeCompare(right.modelId));
+}
+
+function configFingerprint(clientsCsv, allTimeSince, projectsEnabled = true, qoderCnDbPath = '', customModelPricing = []) {
   // Deterministic string that captures the config inputs anchor correctness
   // depends on. When this changes, the persisted anchor is invalidated.
   const qoderCn = String(qoderCnDbPath || '').trim();
   const qoderCnPart = qoderCn ? `|qodercn:${path.resolve(qoderCn)}` : '';
-  return `${normalizeClientsCsv(clientsCsv)}|${allTimeSince}|projects:${projectsEnabled !== false ? 'on' : 'off'}${qoderCnPart}`;
+  const base = `${normalizeClientsCsv(clientsCsv)}|${allTimeSince}|projects:${projectsEnabled !== false ? 'on' : 'off'}${qoderCnPart}`;
+  const pricing = customPricingFingerprint(customModelPricing);
+  return pricing.length > 0 ? `${base}|pricing:${JSON.stringify(pricing)}` : base;
 }
 
 function qoderCnDbPathForClients(clientsCsv, options = {}) {
@@ -2729,10 +2759,10 @@ function qoderCnDbPathForClients(clientsCsv, options = {}) {
 // collector still reuses the periods then and simply forces a full scan, while
 // a seed has nothing to stand on and declines.
 function collectorAnchorTrust(saved, options = {}) {
-  const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', now = new Date() } = options;
+  const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', customModelPricing = [], now = new Date() } = options;
   if (!saved || saved.dateKey !== localTodayKey(now)) return null;
   if (!saved.today || !saved.month || !saved.allTime) return null;
-  if (saved.configFingerprint !== configFingerprint(clients, allTimeSince, projectsEnabled, qoderCnDbPath)) return null;
+  if (saved.configFingerprint !== configFingerprint(clients, allTimeSince, projectsEnabled, qoderCnDbPath, customModelPricing)) return null;
   const parsed = Date.parse(saved.fullScanAt || '');
   const capturedAtMs = Number.isFinite(parsed) && parsed <= now.getTime() ? parsed : null;
   return { capturedAtMs };
@@ -2747,10 +2777,10 @@ function collectorAnchorTrust(saved, options = {}) {
 // payload that is explicitly labeled with the day it was captured on. Returns
 // { capturedAtMs, dateKey } or null.
 function collectorSnapshotTrust(saved, options = {}) {
-  const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', now = new Date() } = options;
+  const { clients = '', allTimeSince = '', projectsEnabled = true, qoderCnDbPath = '', customModelPricing = [], now = new Date() } = options;
   if (!saved || typeof saved !== 'object') return null;
   if (!saved.dateKey || !saved.today || !saved.month || !saved.allTime) return null;
-  if (saved.configFingerprint !== configFingerprint(clients, allTimeSince, projectsEnabled, qoderCnDbPath)) return null;
+  if (saved.configFingerprint !== configFingerprint(clients, allTimeSince, projectsEnabled, qoderCnDbPath, customModelPricing)) return null;
   const parsed = Date.parse(saved.fullScanAt || '');
   const capturedAtMs = Number.isFinite(parsed) && parsed <= now.getTime() ? parsed : null;
   return { capturedAtMs, dateKey: String(saved.dateKey) };
@@ -3027,7 +3057,8 @@ function startCollector(options) {
         clients,
         allTimeSince,
         projectsEnabled: options.projectsEnabled,
-        qoderCnDbPath
+        qoderCnDbPath,
+        customModelPricing: resolveCustomModelPricing(options.customModelPricing, log)
       });
       if (trust) {
         anchor = {
@@ -3114,12 +3145,14 @@ function startCollector(options) {
     lastTickAttemptAt = tickStartedAt;
     lastTickReasonCode = tickReasonCode(reason);
     lastTickScope = tickScopeCode(tickOptions);
+    const customModelPricing = resolveCustomModelPricing(options.customModelPricing, log);
     try {
       let captured = null;
       const qoderCnReadState = { periodFailed: false };
       const summary = await collectUsageOnce({
         ...options,
         signal: runtimeSignal,
+        customModelPricing,
         clients,
         allTimeSince,
         commandTimeoutMs,
@@ -3255,7 +3288,7 @@ function startCollector(options) {
               wslStatus: wslStatusAnchor,
               ...(anchor.nativeSessions ? { nativeSessions: anchor.nativeSessions } : {}),
               ...(anchor.nativeProjects ? { nativeProjects: anchor.nativeProjects } : {}),
-              configFingerprint: configFingerprint(clients, allTimeSince, options.projectsEnabled, qoderCnDbPath),
+              configFingerprint: configFingerprint(clients, allTimeSince, options.projectsEnabled, qoderCnDbPath, customModelPricing),
               fullScanAt: new Date(lastFullScanAt).toISOString()
             }));
           } catch (_) {}

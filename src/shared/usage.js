@@ -571,13 +571,13 @@ function addSession(period, session) {
   mergeSession(period.sessions[key], session);
 }
 
-function sessionFromRow(row, client = detectClient(row)) {
+function sessionFromRow(row, client = detectClient(row), resolvedCost = costValue(row)) {
   if (!client || client === REASONIX_CLIENT || isReasonixSyntheticSession(row)) return null;
   const id = detectSessionId(row);
   if (!id) return null;
   const session = emptySession(client, id);
   session.totalTokens = Math.max(0, Math.round(tokenValueForClient(row, client)));
-  session.costUsd = costValue(row);
+  session.costUsd = resolvedCost;
   session.messageCount = Math.max(0, Math.round(firstNumber(row, MESSAGE_COUNT_KEYS)));
   Object.assign(session, sessionTokenComponents(row));
   session.outputTokens = Math.max(0, Math.round(outputValueForClient(row, client)));
@@ -817,11 +817,24 @@ const UNATTRIBUTED_USAGE_CLIENT = '__unattributed';
 // aggregate and its per-client partition, and deriving per copy would run
 // tokenValueForClient, detectModel and sessionFromRow twice per row on the
 // scan path.
-function usageRowStats(row, client) {
+function usageRowStats(row, client, costResolver) {
   const performance = row?.performance && typeof row.performance === 'object' ? row.performance : null;
+  let model = detectModel(row, client);
+  if (client === 'cursor' && model === 'auto') model = 'cursor-auto';
+  const components = sessionTokenComponents(row);
+  const cost = resolvedRowCost(row, {
+    client,
+    model,
+    provider: normalizeProviderName(row.provider),
+    input: components.inputTokens,
+    output: components.outputTokens,
+    cacheRead: components.cacheReadTokens,
+    cacheWrite: components.cacheWriteTokens,
+    reasoning: components.reasoningTokens
+  }, costResolver);
   return {
     tokens: tokenValueForClient(row, client),
-    cost: costValue(row),
+    cost,
     cacheRead: Math.max(0, Math.round(firstNumber(row, CACHE_READ_TOKEN_KEYS))),
     cacheWrite: Math.max(0, Math.round(firstNumber(row, CACHE_WRITE_TOKEN_KEYS))),
     output: Math.max(0, Math.round(outputValueForClient(row, client))),
@@ -832,8 +845,8 @@ function usageRowStats(row, client) {
     unclassified: Math.max(0, Math.round(firstNumber(row, UNCLASSIFIED_TOKEN_KEYS))),
     timedTokens: Math.max(0, Math.round(firstNumber(performance, TIMED_TOKEN_KEYS))),
     timedDurationMs: Math.max(0, Math.round(firstNumber(performance, TIMED_DURATION_KEYS))),
-    model: detectModel(row, client),
-    session: sessionFromRow(row, client)
+    model,
+    session: sessionFromRow(row, client, cost)
   };
 }
 
@@ -905,7 +918,7 @@ function fallbackUsagePeriod(json) {
 // pass. The partitions stay collector-internal; they let a watch tick replace
 // only the client whose files changed without reconstructing model/cache/project
 // attribution from the already-aggregated public period.
-function extractUsageBundleFromTokscale(json) {
+function extractUsageBundleFromTokscale(json, options = {}) {
   const rows = [];
   collectUsageRows(json, rows);
   if (rows.length === 0 && json && typeof json === 'object') {
@@ -921,21 +934,37 @@ function extractUsageBundleFromTokscale(json) {
     const client = detectClient(row);
     const partitionKey = client || UNATTRIBUTED_USAGE_CLIENT;
     if (!byClient[partitionKey]) byClient[partitionKey] = emptyPeriod();
-    const stats = usageRowStats(row, client);
+    const stats = usageRowStats(row, client, options.costResolver);
     addUsageRowStatsToPeriod(period, client, stats);
     addUsageRowStatsToPeriod(byClient[partitionKey], client, stats);
   }
   return { period, byClient };
 }
 
-function extractUsageFromTokscale(json) {
+// Tokscale treats provider-reported costs as authoritative for some clients, so
+// writing its custom-pricing.json alone cannot guarantee an override. Apply the
+// GUI's custom model pricing directly to the row before it joins any period.
+function resolvedRowCost(row, context, costResolver) {
+  const originalCost = costValue(row);
+  if (typeof costResolver !== 'function') return originalCost;
+  try {
+    const resolved = costResolver({ ...context, row, originalCost });
+    return typeof resolved === 'number' && Number.isFinite(resolved) && resolved >= 0
+      ? resolved
+      : originalCost;
+  } catch (_) {
+    return originalCost;
+  }
+}
+
+function extractUsageFromTokscale(json, options = {}) {
   const rows = [];
   collectUsageRows(json, rows);
   if (rows.length === 0 && json && typeof json === 'object') return fallbackUsagePeriod(json);
   const period = emptyPeriod();
   for (const row of rows) {
     const client = detectClient(row);
-    addUsageRowStatsToPeriod(period, client, usageRowStats(row, client));
+    addUsageRowStatsToPeriod(period, client, usageRowStats(row, client, options.costResolver));
   }
   return period;
 }

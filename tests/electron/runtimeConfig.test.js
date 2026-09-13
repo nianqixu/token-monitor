@@ -370,6 +370,19 @@ test('desktop WorkBuddy config ignores legacy settings and environment credentia
   assert.equal(limits.workbuddyDesktopSessionEnabled, false);
 });
 
+test('usage config keeps custom pricing live through a dispatch-time getter', () => {
+  let pricing = [{ modelId: 'mimo-v2.5-pro', inputPerM: 0.4, outputPerM: 0.8 }];
+  const getCustomModelPricing = () => pricing;
+  const usage = usageConfigFromSettings({ customModelPricing: [{ modelId: 'stale' }] }, {
+    getCustomModelPricing
+  });
+
+  assert.equal(usage.customModelPricing, getCustomModelPricing);
+  assert.deepEqual(usage.customModelPricing(), pricing);
+  pricing = [{ modelId: 'mimo-v2.5-pro', inputPerM: 1, outputPerM: 2 }];
+  assert.deepEqual(usage.customModelPricing(), pricing);
+});
+
 test('settings classifier separates structural, limits reconfigure, sink, and provider invalidation changes', () => {
   const previous = {
     hubMode: 'local',
