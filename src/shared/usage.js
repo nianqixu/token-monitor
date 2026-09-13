@@ -253,6 +253,7 @@ function normalizeClientNameUncached(raw) {
   if (raw.includes('kimi')) return 'kimi';
   if (raw.includes('qwen')) return 'qwen';
   if (raw.includes('grok')) return 'grok';
+  if (raw === 'droid') return 'droid';
   if (raw.includes('copilot')) return 'copilot';
   if (/\bpi\b/.test(raw)) return 'pi';
   if (raw.includes('zed')) return 'zed';
