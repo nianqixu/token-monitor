@@ -8,12 +8,15 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const {
+  TRAE_SOURCES,
   applyTraeCollectionHistory,
   applyTraeCollectionUsage,
   buildTraeHistoryGraph,
   buildTraePeriodsNormalized,
+  loadPersistedTraeSnapshot,
   localDayKeyOf,
   localMonthKeyOf,
+  persistTraeSnapshot,
   traeDataPaths,
   traeSource,
   traeSourceSignature
@@ -447,6 +450,10 @@ function createTraeCollection(options = {}) {
         month: localMonthKeyOf(collectedAt),
         rowCount: rows.length
       };
+      // Cold-start seed: the collector anchor is written before this lane's
+      // post-collector merge runs, so without a persisted snapshot every boot
+      // would open on totals missing the Trae lanes until the first tick.
+      persistTraeSnapshot(workDir, snapshot, fsApi);
       lastSourceSignature = signature;
       lastSuccessAt = new Date(nowMs()).toISOString();
       lastError = null;
@@ -571,9 +578,39 @@ function createTraeCollection(options = {}) {
   };
 }
 
+// Cold-start seed support: applies every lane's last persisted snapshot to a
+// collector anchor record through the same merge functions the live ticks use
+// (applyTraeCollectionUsage gates today/month on the snapshot's day/month, so
+// a yesterday snapshot only feeds allTime — and this month while it still is
+// the snapshot's month). Lanes-first ordering mirrors traeTransformUsage so the
+// session archives project over the same base the live pipeline produces.
+function applyPersistedTraeCollectionSnapshots(target, options = {}) {
+  if (!target || typeof target !== 'object') return target;
+  const fsApi = options.fsApi || fs;
+  const now = options.now ? new Date(options.now) : new Date();
+  const todayKey = options.todayKey || localDayKeyOf(now);
+  const userDataPath = options.userDataPath || '.';
+  for (const source of Object.values(TRAE_SOURCES)) {
+    const workDir = options.workDirBySource
+      ? options.workDirBySource[source.id]
+      : path.join(userDataPath, `${source.id}-collection`);
+    const persisted = loadPersistedTraeSnapshot(workDir, fsApi);
+    if (!persisted) continue;
+    applyTraeCollectionUsage(target, persisted, { now, client: source.client });
+    if (persisted.graph) {
+      applyTraeCollectionHistory(target, persisted.graph, {
+        todayKey,
+        capDays: options.capDays
+      });
+    }
+  }
+  return target;
+}
+
 module.exports = {
   DEFAULT_INTERVAL_MS,
   TRAE_COLLECTION_STARTUP_DELAY_MS,
+  applyPersistedTraeCollectionSnapshots,
   createTraeCollection,
   normalizeTraeIntervalMs
 };

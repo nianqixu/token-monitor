@@ -29,6 +29,7 @@ const {
   normalizeTraeHistoryRow,
   normalizeTraeTurnRow,
   traeErrorCode,
+  traeModelFromContext,
   traeSource: resolveTraeSource,
   verifyTraeKey
 } = require('./traeUsage');
@@ -493,6 +494,10 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, sinceHistoryId, signal,
     const sessionIdIdx = requireColumn(chatColumns.columns, 'session_id', TABLE_CHAT_TURN);
     const createdAtIdx = requireColumn(chatColumns.columns, 'created_at', TABLE_CHAT_TURN);
     const contextIdx = requireColumn(chatColumns.columns, 'context', TABLE_CHAT_TURN);
+    // response_message_id keys the turn's model for sub-agent attribution; looked
+    // up optionally so a schema without it degrades to the generic model label
+    // instead of throwing the walk into a full decrypt.
+    const turnIdIdx = chatColumns.columns.indexOf('response_message_id');
 
     const lowerBound = Number.isFinite(sinceId) && sinceId > 0
       ? Math.max(0, Math.trunc(sinceId) - TRAE_INCREMENTAL_OVERLAP)
@@ -500,6 +505,9 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, sinceHistoryId, signal,
     const attribution = buildProjectAttribution(pageSource, schemas);
 
     const rows = [];
+    // chat_turn.response_message_id -> that turn's model, the attribution a
+    // sub-agent history_v2 row inherits through its own message_id.
+    const turnModels = new Map();
     let maxId = 0;
     for (const cell of walkTable(pageSource, chatTurn.rootPage, lowerBound)) {
       maxId = Math.max(maxId, cell.rowid);
@@ -526,6 +534,12 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, sinceHistoryId, signal,
         if (rows.length >= maxRows) {
           throw traeErrorCode('TRAE_READ_BUDGET_EXCEEDED', `trae targeted: chat_turn read budget exceeded (${maxRows} rows)`);
         }
+        const turnKey = turnIdIdx >= 0 && turnIdIdx < values.length ? String(values[turnIdIdx] ?? '').trim() : '';
+        if (turnKey) {
+          let turnModel = '';
+          try { turnModel = traeModelFromContext(JSON.parse(String(context))); } catch (_) { /* no model either way */ }
+          if (turnModel) turnModels.set(turnKey, turnModel);
+        }
       }
     }
     // maxId must reflect the whole table even when the pruned walk skipped
@@ -533,7 +547,7 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, sinceHistoryId, signal,
     if (lowerBound !== null) maxId = maxRowid(pageSource, chatTurn.rootPage);
 
     const historyMaxId = source.subUsageTable
-      ? readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, attribution, rows, maxRows)
+      ? readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, attribution, rows, maxRows, turnModels)
       : null;
 
     return { rows, maxId, historyMaxId, pagesVisited: pageSource.visited.size, bytesRead: pageSource.bytesRead, walPages: pageSource.walHits };
@@ -547,7 +561,7 @@ function readTraeTargetedRows({ dbPath, encKey, sinceId, sinceHistoryId, signal,
 // lower-bound pruning and whole-table MAX(id) the chat_turn walk uses. Returns
 // null — and appends nothing — when either ledger table is absent, so a
 // database predating sub-agents stays on the chat_turn-only pipeline.
-function readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, attribution, rows, maxRows) {
+function readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, attribution, rows, maxRows, turnModels = new Map()) {
   const agentRun = schemas.get(TABLE_AGENT_RUN);
   const historyV2 = schemas.get(TABLE_HISTORY_V2);
   if (!agentRun || !historyV2) return null;
@@ -568,6 +582,9 @@ function readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, a
   const tokenUsageIdx = requireColumn(columns.columns, 'token_usage', TABLE_HISTORY_V2);
   const agentRunIdIdx = requireColumn(columns.columns, 'agent_run_id', TABLE_HISTORY_V2);
   const deletedAtIdx = columns.columns.indexOf('deleted_at');
+  // message_id links the row to its owning turn; optional so a schema without it
+  // degrades to the generic model label instead of throwing to the full decrypt.
+  const messageIdIdx = columns.columns.indexOf('message_id');
 
   const historyLowerBound = Number.isFinite(sinceHistoryId) && sinceHistoryId > 0
     ? Math.max(0, Math.trunc(sinceHistoryId) - TRAE_INCREMENTAL_OVERLAP)
@@ -594,12 +611,14 @@ function readSubAgentRowsTargeted(pageSource, schemas, source, sinceHistoryId, a
     const createdAt = createdAtIdx < values.length ? values[createdAtIdx] : null;
     const messages = messagesIdx < values.length ? values[messagesIdx] : null;
     const projectId = attribution.sessionProject.get(String(sessionId ?? ''));
+    const turnKey = messageIdIdx >= 0 && messageIdIdx < values.length ? String(values[messageIdIdx] ?? '').trim() : '';
     const normalized = normalizeTraeHistoryRow({
       rowid: id,
       session_id: sessionId,
       created_at: createdAt,
       messages,
       token_usage: tokenUsage,
+      parent_model: turnKey ? (turnModels.get(turnKey) || '') : '',
       project_label: projectId ? (attribution.projectNames.get(projectId) || '') : ''
     }, source);
     if (normalized) {

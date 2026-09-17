@@ -16,11 +16,13 @@ const {
   buildTraePeriodsNormalized,
   collectTraeSnapshot,
   decryptTraeDb,
+  loadPersistedTraeSnapshot,
   localDayKeyOf,
   localMonthKeyOf,
   mergeTraeRows,
   normalizeTraeHistoryRow,
   normalizeTraeTurnRow,
+  persistTraeSnapshot,
   readTraeRows,
   traeDataPaths,
   traeSourceSignature,
@@ -218,6 +220,30 @@ test('normalizeTraeHistoryRow maps a sub-agent history_v2 call to the usage-row 
   assert.equal(clamped.unclassified, 100);
   assert.equal(clamped.output, 0);
   assert.equal(clamped.model, 'trae');
+  // A sub-agent row whose raw_messages carry no model inherits the owning turn's
+  // model, so its spend is counted inside that model's total instead of minting a
+  // separate pseudo-model (or the bare 'trae' literal, which is also the Trae CN
+  // client id and its vendor key).
+  const inherited = normalizeTraeHistoryRow({
+    rowid: 44,
+    session_id: 's3',
+    created_at: 1750000000,
+    token_usage: 700,
+    parent_model: 'glm-5.2',
+    messages: JSON.stringify({ raw_messages: [{ role: 'assistant' }] })
+  });
+  assert.equal(inherited.model, 'glm-5.2');
+  assert.equal(inherited.output, 700);
+  // A model recorded on the row itself still wins over the turn's.
+  const ownModel = normalizeTraeHistoryRow({
+    rowid: 45,
+    session_id: 's3',
+    created_at: 1750000000,
+    token_usage: 700,
+    parent_model: 'glm-5.2',
+    messages: JSON.stringify({ raw_messages: [{ role: 'assistant', extra_info: { model: 'kimi-k2.5' } }] })
+  });
+  assert.equal(ownModel.model, 'kimi-k2.5');
   assert.equal(normalizeTraeHistoryRow({ token_usage: 5, messages: 'not json' }), null);
   assert.equal(normalizeTraeHistoryRow({ token_usage: 0, messages: '{"raw_messages":[]}' }), null);
 });
@@ -629,4 +655,56 @@ test('buildTraePeriodsNormalized and the history graph attribute rows to the req
   const todayKey = localDayKeyOf(new Date());
   const day = graph.contributions.find((entry) => entry.date === todayKey);
   assert.equal(day.clients[0].client, 'traework');
+});
+
+test('persistTraeSnapshot and loadPersistedTraeSnapshot round-trip a lane snapshot', () => {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trae-snapshot-'));
+  try {
+    const snapshot = {
+      periods: {
+        today: { clients: { trae: 100 }, sessions: {} },
+        month: { clients: { trae: 200 }, sessions: {} },
+        allTime: { clients: { trae: 300 }, sessions: {} }
+      },
+      graph: { contributions: [{ date: '2026-09-16', clients: [] }] },
+      capturedAt: '2026-09-16T12:00:00.000Z',
+      day: '2026-09-16',
+      month: '2026-09',
+      rowCount: 3
+    };
+    assert.equal(persistTraeSnapshot(workDir, snapshot), true);
+    assert.deepEqual(loadPersistedTraeSnapshot(workDir), snapshot);
+
+    // A second persist replaces atomically; no .tmp residue stays behind.
+    assert.equal(persistTraeSnapshot(workDir, { ...snapshot, rowCount: 4 }), true);
+    assert.equal(loadPersistedTraeSnapshot(workDir).rowCount, 4);
+    assert.equal(fs.existsSync(path.join(workDir, 'snapshot.json.tmp')), false);
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+test('loadPersistedTraeSnapshot rejects absent, malformed, and wrong-shaped files', () => {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trae-snapshot-'));
+  try {
+    assert.equal(loadPersistedTraeSnapshot(workDir), null, 'no file yields null');
+
+    fs.writeFileSync(path.join(workDir, 'snapshot.json'), 'not json at all');
+    assert.equal(loadPersistedTraeSnapshot(workDir), null, 'unparseable content yields null');
+
+    fs.writeFileSync(path.join(workDir, 'snapshot.json'), JSON.stringify({ capturedAt: '2026-09-16T12:00:00.000Z' }));
+    assert.equal(loadPersistedTraeSnapshot(workDir), null, 'a snapshot without periods yields null');
+
+    fs.writeFileSync(path.join(workDir, 'snapshot.json'), JSON.stringify({ periods: { today: {} } }));
+    assert.equal(loadPersistedTraeSnapshot(workDir), null, 'a snapshot without capturedAt yields null');
+
+    fs.writeFileSync(path.join(workDir, 'snapshot.json'), JSON.stringify({
+      periods: { allTime: { clients: { trae: 1 } } },
+      capturedAt: '2026-09-16T12:00:00.000Z',
+      graph: { contributions: 'nope' }
+    }));
+    assert.equal(loadPersistedTraeSnapshot(workDir), null, 'a malformed graph yields null');
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
 });

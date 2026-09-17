@@ -133,6 +133,10 @@ function usageConfigFromSettings(settings = {}, context = {}) {
     historyEnabled: settings.historyEnabled !== false,
     dailyHistoryArchiveEnabled: settings.sessionUsageArchiveEnabled !== false,
     dailyHistoryArchiveWriteEnabled: context.dailyHistoryArchiveWriteEnabled,
+    // Clients merged into summaries only after the collector returns (the local
+    // Trae lanes): kept out of the daily archive's live overlay so the same
+    // tick cannot count them via both the overlay and the post-collector merge.
+    dailyHistoryLiveDayExcludedClients: context.dailyHistoryLiveDayExcludedClients || [],
     projectsEnabled: settings.projectsEnabled !== false,
     reasonixNativeSessionsEnabled: context.reasonixNativeSessionsEnabled === true,
     historyIntervalMs: context.historyIntervalMs ?? settings.historyIntervalMs,

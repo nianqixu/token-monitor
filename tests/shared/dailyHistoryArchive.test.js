@@ -716,3 +716,74 @@ test('clearDailyHistoryArchive removes persisted data and accepts a missing file
     throw error;
   } }), false);
 });
+
+test('live capture excludes lane clients whose usage merges after the collector', () => {
+  const period = {
+    totalTokens: 1500,
+    clients: { claude: 500, trae: 600, traework: 400 },
+    clientModels: {
+      claude: { opus: 500 },
+      trae: { 'glm-5.3': 600 },
+      traework: { 'deepseek-v4-flash': 400 }
+    }
+  };
+  const archive = captureLiveDailyHistory({}, period, {
+    todayKey: '2026-09-17',
+    liveDayExcludedClients: ['trae', 'traework']
+  });
+  const observations = Object.values(archive.liveDays['2026-09-17'].observations);
+  const clients = new Set(observations.map((observation) => observation.client));
+  assert.ok(clients.has('claude'));
+  assert.ok(!clients.has('trae'), 'excluded lane clients must not enter the live overlay');
+  assert.ok(!clients.has('traework'), 'excluded lane clients must not enter the live overlay');
+  // The period total still carries the lanes' tokens; the unknown remainder
+  // keeps the live day closing over it without attributing it to a lane.
+  const unknown = observations.filter((observation) => observation.client === 'unknown');
+  assert.equal(unknown.reduce((sum, observation) => sum + observation.tokens, 0), 1000);
+});
+
+test('live capture strips legacy lane observations already in the archive', () => {
+  const legacy = {
+    liveDays: {
+      '2026-09-16': {
+        date: '2026-09-16',
+        activeTimeMs: 0,
+        observations: {
+          '["trae","glm-5.3"]': { client: 'trae', modelId: 'glm-5.3', tokens: 500, cost: 0, messages: 0 },
+          '["claude","opus"]': { client: 'claude', modelId: 'opus', tokens: 100, cost: 0, messages: 0 }
+        }
+      }
+    }
+  };
+  const archive = captureLiveDailyHistory(legacy, livePeriod(300), {
+    todayKey: '2026-09-17',
+    liveDayExcludedClients: ['trae', 'traework']
+  });
+  const rolledDay = archive.liveDays['2026-09-16'];
+  const clients = new Set(Object.values(rolledDay.observations).map((observation) => observation.client));
+  assert.ok(!clients.has('trae'), 'a legacy lane observation is removed once the exclusion is active');
+  assert.ok(clients.has('claude'), 'other clients survive the strip');
+});
+
+test('graph overlay keeps excluded lane clients out of the projected history', () => {
+  const archive = {
+    liveDays: {
+      '2026-09-16': {
+        date: '2026-09-16',
+        activeTimeMs: 0,
+        observations: {
+          '["trae","glm-5.3"]': { client: 'trae', modelId: 'glm-5.3', tokens: 500, cost: 0, messages: 0 },
+          '["claude","opus"]': { client: 'claude', modelId: 'opus', tokens: 100, cost: 0, messages: 0 }
+        }
+      }
+    }
+  };
+  const projected = graphFromDailyHistoryArchive([], archive, {
+    todayKey: '2026-09-17',
+    liveDayExcludedClients: ['trae', 'traework']
+  });
+  const day = projected.contributions.find((row) => row.date === '2026-09-16');
+  const clients = new Set(day.clients.map((row) => row.client));
+  assert.ok(!clients.has('trae'));
+  assert.ok(clients.has('claude'));
+});

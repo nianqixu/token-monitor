@@ -270,7 +270,7 @@ function captureDailyHistoryArchive(existingArchive, graphs, options = {}) {
   return archive;
 }
 
-function periodLiveDay(period, date) {
+function periodLiveDay(period, date, excluded = new Set()) {
   if (!period || typeof period !== 'object' || !DAY_KEY_RE.test(date)) return null;
   const observations = new Map();
   const addObservation = (client, modelId, tokens, cost) => {
@@ -298,7 +298,8 @@ function periodLiveDay(period, date) {
     : {};
   const clients = period.clients && typeof period.clients === 'object' ? period.clients : {};
   const clientCosts = period.clientCosts && typeof period.clientCosts === 'object' ? period.clientCosts : {};
-  const clientIds = new Set([...Object.keys(clientModels), ...Object.keys(clients), ...Object.keys(clientCosts)]);
+  const clientIds = new Set([...Object.keys(clientModels), ...Object.keys(clients), ...Object.keys(clientCosts)]
+    .filter((client) => !excluded.has(String(client || '').toLowerCase())));
 
   for (const client of clientIds) {
     const models = clientModels[client] && typeof clientModels[client] === 'object'
@@ -445,15 +446,58 @@ function mergeLiveDayMetadata(liveDay, previousDay) {
   };
 }
 
+function normalizeExcludedClients(value) {
+  const list = Array.isArray(value)
+    ? value
+    : (typeof value === 'string' ? value.split(',') : []);
+  return new Set(list.map((name) => String(name || '').trim().toLowerCase()).filter(Boolean));
+}
+
+// Removes observations of the excluded clients from every live day (dropping
+// days left empty). The local Trae lanes feed their history into every tick
+// summary directly (post-collector merge), so any copy of their tokens inside
+// the archive's live overlay would be counted twice by the same tick.
+function stripLiveDayExcludedClients(archive, excluded) {
+  if (!archive || excluded.size === 0 || !archive.liveDays) return archive;
+  const liveDays = {};
+  let changed = false;
+  for (const [date, day] of Object.entries(archive.liveDays)) {
+    const observations = {};
+    for (const [key, observation] of Object.entries(day.observations || {})) {
+      if (excluded.has(String(observation.client || '').toLowerCase())) {
+        changed = true;
+        continue;
+      }
+      observations[key] = observation;
+    }
+    if (Object.keys(observations).length > 0 || num(day.activeTimeMs) > 0) {
+      liveDays[date] = { ...day, observations };
+    } else {
+      changed = true;
+    }
+  }
+  if (!changed) return archive;
+  if (Object.keys(liveDays).length === 0) {
+    const next = { ...archive };
+    delete next.liveDays;
+    return next;
+  }
+  return { ...archive, liveDays };
+}
+
 function captureLiveDailyHistory(existingArchive, period, options = {}) {
-  const archive = normalizeDailyHistoryArchive(existingArchive);
+  const excluded = normalizeExcludedClients(options.liveDayExcludedClients);
+  const archive = stripLiveDayExcludedClients(
+    normalizeDailyHistoryArchive(existingArchive),
+    excluded
+  );
   const date = String(options.todayKey || '').slice(0, 10);
   if (DAY_KEY_RE.test(date) && archive.liveDays) {
     for (const liveDate of Object.keys(archive.liveDays)) {
       if (liveDate > date) delete archive.liveDays[liveDate];
     }
   }
-  const incoming = periodLiveDay(period, date);
+  const incoming = periodLiveDay(period, date, excluded);
   if (!incoming) return archive;
   const previous = archive.liveDays?.[date];
   if (!previous || liveDayIsGreater(incoming, previous)) {
@@ -478,7 +522,11 @@ function graphTimeMetrics(graphs, activeTimeMs) {
 
 function graphFromDailyHistoryArchive(graphs, archive, options = {}) {
   const currentDays = observationsFromGraphs(graphs);
-  const normalizedArchive = normalizeDailyHistoryArchive(archive);
+  const excluded = normalizeExcludedClients(options.liveDayExcludedClients);
+  const normalizedArchive = stripLiveDayExcludedClients(
+    normalizeDailyHistoryArchive(archive),
+    excluded
+  );
   const todayKey = String(options.todayKey || '').slice(0, 10);
   const hasTodayKey = DAY_KEY_RE.test(todayKey);
 
@@ -573,7 +621,10 @@ function readDailyHistoryArchive(options = {}) {
     parseError.cause = error;
     throw parseError;
   }
-  return normalizeDailyHistoryArchive(validateDailyHistoryArchiveDocument(parsed, filePath));
+  return stripLiveDayExcludedClients(
+    normalizeDailyHistoryArchive(validateDailyHistoryArchiveDocument(parsed, filePath)),
+    normalizeExcludedClients(options.liveDayExcludedClients)
+  );
 }
 
 function writeDailyHistoryArchive(archive, options = {}) {
@@ -592,9 +643,15 @@ function clearDailyHistoryArchive(options = {}) {
   }
 }
 
-function mergeLiveDaysIntoArchive(existingArchive, liveDays) {
-  const archive = normalizeDailyHistoryArchive(existingArchive);
-  const incoming = normalizeDailyHistoryArchive({ liveDays }).liveDays || {};
+function mergeLiveDaysIntoArchive(existingArchive, liveDays, options = {}) {
+  const archive = stripLiveDayExcludedClients(
+    normalizeDailyHistoryArchive(existingArchive),
+    normalizeExcludedClients(options.liveDayExcludedClients)
+  );
+  const incoming = stripLiveDayExcludedClients(
+    normalizeDailyHistoryArchive({ liveDays }),
+    normalizeExcludedClients(options.liveDayExcludedClients)
+  ).liveDays || {};
   for (const [date, liveDay] of Object.entries(incoming)) {
     const previous = archive.liveDays?.[date];
     if (!previous || liveDayIsGreater(liveDay, previous)) {
@@ -613,7 +670,7 @@ function archiveWriteEnabled(options = {}) {
 function retainDailyHistory(graphs, options = {}) {
   const previous = readDailyHistoryArchive(options);
   const capture = (archive) => captureDailyHistoryArchive(
-    mergeLiveDaysIntoArchive(archive, options.liveDays),
+    mergeLiveDaysIntoArchive(archive, options.liveDays, options),
     graphs,
     options
   );
@@ -637,7 +694,7 @@ function retainDailyHistory(graphs, options = {}) {
 function retainLiveDailyHistory(period, options = {}) {
   const previous = readDailyHistoryArchive(options);
   const capture = (archive) => captureLiveDailyHistory(
-    mergeLiveDaysIntoArchive(archive, options.liveDays),
+    mergeLiveDaysIntoArchive(archive, options.liveDays, options),
     period,
     options
   );
@@ -658,11 +715,13 @@ module.exports = {
   dailyHistoryArchivePath,
   graphFromDailyHistoryArchive,
   captureLiveDailyHistory,
+  mergeLiveDaysIntoArchive,
   normalizeDailyHistoryArchive,
   observationKey,
   readDailyHistoryArchive,
   retainDailyHistory,
   retainLiveDailyHistory,
   shouldReplaceObservation,
+  stripLiveDayExcludedClients,
   writeDailyHistoryArchive
 };

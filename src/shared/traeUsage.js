@@ -18,6 +18,10 @@ const { hasSummaryPeriod } = require('./archiveHelpers');
 const { mergeHistories, normalizeHistory, parseGraphResult } = require('./history');
 
 const TRAE_CLIENT = 'trae';
+// Model label for a row whose model cannot be resolved. It is also the Trae CN
+// client id, which is why the sub-agent path below spends the owning turn's model
+// first: a bare 'trae' model row reads as the other lane's usage.
+const TRAE_FALLBACK_MODEL = 'trae';
 // Collection sources sharing one SQLCipher layout (verified against a live
 // TraeWork desktop install: same encryption parameters, same chat_turn schema,
 // same token_usage shape). Everything source-specific — data directory,
@@ -77,8 +81,6 @@ const TRAE_MAX_ROWS = 500_000;
 // the decrypted database file itself is deleted right after the read.
 // `id` is the AUTOINCREMENT primary key (a rowid alias); the rowid pseudo-column
 // is not reliably named in node:sqlite's result, so the explicit id is selected.
-const TRAE_TURNS_SQL = 'SELECT id, session_id, created_at, context FROM chat_turn WHERE context IS NOT NULL';
-const TRAE_TURNS_SINCE_SQL = `${TRAE_TURNS_SQL} AND id > ?`;
 const TRAE_MAX_ROWID_SQL = 'SELECT MAX(id) AS max_id FROM chat_turn';
 // Sub-agent ledger: agent_run rows with a parent are the sub-agent calls, and
 // their per-call token increments live in history_v2 keyed by agent_run_id.
@@ -89,10 +91,37 @@ const TRAE_SUB_RUN_IDS_SQL = "SELECT agent_run_id FROM agent_run WHERE parent_ru
 // ORDER BY id keeps the SQL path in the same rowid order the targeted walk
 // yields (the agent_run_id IN (...) predicate alone lets SQLite scan through
 // an index in arbitrary order), so the two readers stay oracle-comparable.
-const TRAE_HISTORY_SUB_SELECT = 'SELECT id, session_id, created_at, messages, token_usage, agent_run_id FROM history_v2';
 const TRAE_HISTORY_SUB_WHERE = `(deleted_at IS NULL OR deleted_at = 0) AND agent_run_id IN (${TRAE_SUB_RUN_IDS_SQL})`;
-const TRAE_HISTORY_SUB_SQL = `${TRAE_HISTORY_SUB_SELECT} WHERE ${TRAE_HISTORY_SUB_WHERE} ORDER BY id`;
-const TRAE_HISTORY_SUB_SINCE_SQL = `${TRAE_HISTORY_SUB_SELECT} WHERE ${TRAE_HISTORY_SUB_WHERE} AND id > ? ORDER BY id`;
+
+// Column presence probe. Both turn->sub-agent link columns are read this way
+// rather than assumed: a database predating either one keeps collecting, its
+// sub-agent rows just fall back to the generic model label instead of the whole
+// tick failing on a missing column. A table that cannot be introspected reports
+// the column as absent, which is the same graceful path.
+function traeTableColumns(database, table) {
+  try {
+    return new Set(database.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row?.name)));
+  } catch (_) {
+    return new Set();
+  }
+}
+
+// chat_turn.response_message_id pairs with history_v2.message_id: the turn a
+// sub-agent run was spawned under, whose model its spend is counted into.
+function traeTurnsSql(sinceId, hasResponseMessageId) {
+  const columns = hasResponseMessageId
+    ? 'id, session_id, created_at, context, response_message_id'
+    : 'id, session_id, created_at, context';
+  return `SELECT ${columns} FROM chat_turn WHERE context IS NOT NULL${sinceId !== null ? ' AND id > ?' : ''}`;
+}
+
+function traeHistorySubSql(sinceId, hasMessageId) {
+  const columns = hasMessageId
+    ? 'id, session_id, message_id, created_at, messages, token_usage, agent_run_id'
+    : 'id, session_id, created_at, messages, token_usage, agent_run_id';
+  return `SELECT ${columns} FROM history_v2 WHERE ${TRAE_HISTORY_SUB_WHERE}`
+    + `${sinceId !== null ? ' AND id > ?' : ''} ORDER BY id`;
+}
 const TRAE_HISTORY_MAX_ROWID_SQL = 'SELECT MAX(id) AS max_id FROM history_v2';
 // chat_turn rows are inserted with a zeroed token_usage during streaming and
 // UPDATE-backfilled when the turn completes. A bare `id > cursor` read would
@@ -337,11 +366,14 @@ function nonNegativeInt(value) {
   return Number.isFinite(number) && number > 0 ? Math.trunc(number) : 0;
 }
 
+// Raw configured model name for a chat_turn, or '' when the context carries no
+// model_info. Callers own the fallback: the turn label defaults to
+// TRAE_FALLBACK_MODEL, while the sub-agent attribution below reads the raw value
+// so an unknown turn never propagates the bare literal onto sub-agent rows.
 function traeModelFromContext(context) {
   const persist = context?.persist_user_message_context ?? context?.persistUserMessageContext;
   const modelInfo = persist?.model_info ?? persist?.modelInfo;
-  const raw = String(modelInfo?.config_name ?? modelInfo?.configName ?? '').trim();
-  return raw || 'trae';
+  return String(modelInfo?.config_name ?? modelInfo?.configName ?? '').trim();
 }
 
 // Turns one chat_turn row into a usage row shaped like the qodercn/proma rows.
@@ -373,7 +405,7 @@ function normalizeTraeTurnRow(row, source = TRAE_SOURCES.trae) {
   return {
     sessionId: `${src.sessionPrefix}:${sessionId}`,
     messageId: `${src.sessionPrefix}:${sessionId}:${rowId || `${createdAt}`}`,
-    model: traeModelFromContext(context),
+    model: traeModelFromContext(context) || TRAE_FALLBACK_MODEL,
     projectLabel,
     input,
     output: completion,
@@ -396,6 +428,13 @@ function normalizeTraeTurnRow(row, source = TRAE_SOURCES.trae) {
 // count toward totals only and stay out of every cache-hit-rate denominator.
 // The messageId embeds an `hv2` discriminator so a history_v2 id can never
 // collide with a chat_turn rowid in the mergeTraeRows dedup map.
+// Model attribution: a sub-agent row's raw_messages usually carry no model, and
+// the row's message_id IS the owning turn's chat_turn.response_message_id, so the
+// caller passes that turn's model down as parent_model. The sub-agent's spend then
+// lands inside the model that ran the turn instead of minting a separate
+// pseudo-model — verified against a live TRAE SOLO CN database, where every
+// model-less sub-agent row resolved through its parent turn. Only a row whose turn
+// is absent from the read (incremental window, older schema) keeps the fallback.
 function normalizeTraeHistoryRow(row, source = TRAE_SOURCES.trae) {
   const src = traeSource(source);
   const total = nonNegativeInt(row?.token_usage ?? row?.tokenUsage);
@@ -421,10 +460,11 @@ function normalizeTraeHistoryRow(row, source = TRAE_SOURCES.trae) {
   const sessionId = String(row?.session_id ?? row?.sessionId ?? '').trim() || 'unknown';
   const rowId = String(row?.rowid ?? row?.rowId ?? '').trim();
   const projectLabel = String(row?.project_label ?? row?.projectLabel ?? '').trim();
+  const parentModel = String(row?.parent_model ?? row?.parentModel ?? '').trim();
   return {
     sessionId: `${src.sessionPrefix}:${sessionId}`,
     messageId: `${src.sessionPrefix}:${sessionId}:hv2:${rowId || `${createdAt}`}`,
-    model: model || 'trae',
+    model: model || parentModel || TRAE_FALLBACK_MODEL,
     projectLabel,
     input: 0,
     output: total - clampedInput,
@@ -495,10 +535,13 @@ function readTraeRows(decryptedDbPath, options = {}) {
     const { sessionProject, projectNames } = traeProjectLabelsFromDb(database);
     const maxIdRow = database.prepare(TRAE_MAX_ROWID_SQL).get();
     const maxId = Number.isFinite(Number(maxIdRow?.max_id)) ? Number(maxIdRow.max_id) : 0;
-    const statement = sinceId !== null
-      ? database.prepare(TRAE_TURNS_SINCE_SQL)
-      : database.prepare(TRAE_TURNS_SQL);
+    const hasResponseMessageId = traeTableColumns(database, 'chat_turn').has('response_message_id');
+    const statement = database.prepare(traeTurnsSql(sinceId, hasResponseMessageId));
     const rows = [];
+    // chat_turn.response_message_id -> that turn's model. A sub-agent history_v2
+    // row carries the owning turn's id in its own message_id, so this is what
+    // keeps model-less sub-agent spend inside the model instead of a pseudo-model.
+    const turnModels = new Map();
     const iterator = sinceId !== null ? statement.iterate(sinceId) : statement.iterate();
     for (const row of iterator) {
       if (rows.length >= TRAE_MAX_ROWS) {
@@ -512,11 +555,22 @@ function readTraeRows(decryptedDbPath, options = {}) {
         context: row?.context,
         project_label: projectId ? (projectNames.get(projectId) || '') : ''
       }, source);
-      if (normalized) rows.push(normalized);
+      if (normalized) {
+        rows.push(normalized);
+        const turnKey = String(row?.response_message_id ?? '').trim();
+        if (turnKey) {
+          try {
+            const turnModel = traeModelFromContext(JSON.parse(String(row?.context ?? '')));
+            if (turnModel) turnModels.set(turnKey, turnModel);
+          } catch (_) { /* unparseable context contributed no model either way */ }
+        }
+      }
     }
     let historyMaxId = null;
     if (source.subUsageTable && traeSubTablesPresent(database)) {
-      historyMaxId = readTraeSubAgentRows(database, source, options.sinceHistoryId, sessionProject, projectNames, rows);
+      historyMaxId = readTraeSubAgentRows(
+        database, source, options.sinceHistoryId, sessionProject, projectNames, rows, turnModels
+      );
     }
     return { rows, maxId, historyMaxId };
   } finally {
@@ -541,27 +595,34 @@ function traeSubTablesPresent(database) {
 
 // Appends sub-agent usage rows (read from history_v2, restricted to agent_run
 // rows that have a parent) into `rows` and returns the whole-table MAX(id).
-function readTraeSubAgentRows(database, source, sinceHistoryId, sessionProject, projectNames, rows) {
+// turnModels (chat_turn.response_message_id -> model) supplies the model for rows
+// whose raw_messages carry none: a sub-agent row's message_id is the owning turn's
+// response_message_id, so the sub-agent's spend is counted inside the model that
+// ran the turn. A row whose turn is not in this read (incremental window, older
+// schema) falls through to the generic label rather than dropping out.
+function readTraeSubAgentRows(database, source, sinceHistoryId, sessionProject, projectNames, rows, turnModels = new Map()) {
   const historySinceId = Number.isFinite(sinceHistoryId) && sinceHistoryId > 0
     ? Math.max(0, Math.trunc(sinceHistoryId) - TRAE_INCREMENTAL_OVERLAP)
     : null;
   const historyMaxRow = database.prepare(TRAE_HISTORY_MAX_ROWID_SQL).get();
   const historyMaxId = Number.isFinite(Number(historyMaxRow?.max_id)) ? Number(historyMaxRow.max_id) : 0;
-  const historyStatement = historySinceId !== null
-    ? database.prepare(TRAE_HISTORY_SUB_SINCE_SQL)
-    : database.prepare(TRAE_HISTORY_SUB_SQL);
+  const historyStatement = database.prepare(
+    traeHistorySubSql(historySinceId, traeTableColumns(database, 'history_v2').has('message_id'))
+  );
   const historyIterator = historySinceId !== null ? historyStatement.iterate(historySinceId) : historyStatement.iterate();
   for (const row of historyIterator) {
     if (rows.length >= TRAE_MAX_ROWS) {
       throw traeErrorCode('TRAE_READ_BUDGET_EXCEEDED', `trae: history_v2 read budget exceeded (${TRAE_MAX_ROWS} rows)`);
     }
     const projectId = sessionProject.get(String(row?.session_id ?? ''));
+    const turnKey = String(row?.message_id ?? '').trim();
     const normalized = normalizeTraeHistoryRow({
       rowid: row?.id,
       session_id: row?.session_id,
       created_at: row?.created_at,
       messages: row?.messages,
       token_usage: row?.token_usage,
+      parent_model: turnKey ? (turnModels.get(turnKey) || '') : '',
       project_label: projectId ? (projectNames.get(projectId) || '') : ''
     }, source);
     if (normalized) rows.push(normalized);
@@ -836,6 +897,65 @@ function traeSourceSignature(dbPath, fsApi = fs) {
   return parts.join('|');
 }
 
+// ---- Persisted lane snapshot (cold-start seed) ----------------------------
+// The collector anchor is written inside the collector, before the post-collector
+// Trae merge runs, so a cold start would seed the dashboard without the Trae
+// lanes' contribution until the first tick lands. Persisting the lane's last
+// snapshot next to its work directory lets the anchor seed re-apply it through
+// the exact same merge functions the live ticks use.
+const TRAE_SNAPSHOT_FILE = 'snapshot.json';
+const TRAE_SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024;
+
+function traeSnapshotPath(workDir) {
+  return path.join(String(workDir || '.'), TRAE_SNAPSHOT_FILE);
+}
+
+// Best-effort: a failed persist must never fail the collect that produced the
+// snapshot. Atomic via rename so a reader never sees a torn file.
+function persistTraeSnapshot(workDir, snapshot, fsApi = fs) {
+  if (!workDir || !snapshot || typeof snapshot !== 'object') return false;
+  const target = traeSnapshotPath(workDir);
+  const tmp = `${target}.tmp`;
+  try {
+    fsApi.mkdirSync(workDir, { recursive: true });
+    fsApi.writeFileSync(tmp, JSON.stringify(snapshot));
+    fsApi.renameSync(tmp, target);
+    return true;
+  } catch (_) {
+    try { fsApi.unlinkSync(tmp); } catch (_) { /* nothing to clean up */ }
+    return false;
+  }
+}
+
+function loadPersistedTraeSnapshot(workDir, fsApi = fs) {
+  if (!workDir) return null;
+  let raw;
+  try {
+    const stat = fsApi.statSync(traeSnapshotPath(workDir));
+    if (!stat.isFile() || stat.size <= 0 || stat.size > TRAE_SNAPSHOT_MAX_BYTES) return null;
+    raw = fsApi.readFileSync(traeSnapshotPath(workDir), 'utf8');
+  } catch (_) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const periods = parsed.periods;
+  if (!periods || typeof periods !== 'object') return null;
+  const hasPeriods = ['today', 'month', 'allTime'].some((name) => periods[name] && typeof periods[name] === 'object');
+  if (!hasPeriods) return null;
+  if (typeof parsed.capturedAt !== 'string' || !parsed.capturedAt) return null;
+  if (parsed.graph !== undefined
+    && (!parsed.graph || typeof parsed.graph !== 'object' || !Array.isArray(parsed.graph.contributions))) {
+    return null;
+  }
+  return parsed;
+}
+
 module.exports = {
   TRAE_CLIENT,
   TRAE_INCREMENTAL_OVERLAP,
@@ -853,14 +973,17 @@ module.exports = {
   collectTraeSnapshot,
   decryptTraeDb,
   decryptTraePageInto,
+  loadPersistedTraeSnapshot,
   localDayKeyOf,
   localMonthKeyOf,
   mergeTraeRows,
   normalizeTraeHistoryRow,
   normalizeTraeTurnRow,
+  persistTraeSnapshot,
   readTraeRows,
   traeDataPaths,
   traeErrorCode,
+  traeModelFromContext,
   traeSource,
   traeSourceSignature,
   verifyTraeKey

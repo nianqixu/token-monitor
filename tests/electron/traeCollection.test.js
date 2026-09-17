@@ -2,7 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createTraeCollection, normalizeTraeIntervalMs } = require('../../src/electron/traeCollection');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { createTraeCollection, normalizeTraeIntervalMs, applyPersistedTraeCollectionSnapshots } = require('../../src/electron/traeCollection');
+const { persistTraeSnapshot } = require('../../src/shared/traeUsage');
 
 const KEY = 'a'.repeat(64);
 
@@ -12,6 +16,12 @@ function fakePeriods(total = 1000) {
     month: { clients: { trae: total * 2 }, sessions: {} },
     allTime: { clients: { trae: total * 3 }, sessions: {} }
   };
+}
+
+// collectNow persists its snapshot under the lane's work directory, so tests
+// need a throwaway userDataPath instead of the repo root.
+function tempUserDataPath() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'trae-lane-test-'));
 }
 
 let signatureCounter = 0;
@@ -40,7 +50,8 @@ function createLane(overrides = {}) {
     updateSettings: async (patch) => { Object.assign(settings, patch); },
     pushStatus: (status) => pushed.push(status),
     log: () => {},
-    userDataPath: overrides.userDataPath || '.',
+    userDataPath: overrides.userDataPath || tempUserDataPath(),
+    workDir: overrides.workDir,
     nudgeCollector: overrides.nudgeCollector,
     deps
   });
@@ -695,7 +706,7 @@ function createTraeWorkLane(overrides = {}) {
     updateSettings: async (patch) => { Object.assign(settings, patch); },
     pushStatus: (status) => pushed.push(status),
     log: () => {},
-    userDataPath: overrides.userDataPath || '.',
+    userDataPath: overrides.userDataPath || tempUserDataPath(),
     nudgeCollector: overrides.nudgeCollector,
     deps
   });
@@ -749,4 +760,74 @@ test('extracting the key while the app runs arms the live watch and poller', asy
   assert.equal(lane.status().state, 'ok');
   lane.stop();
   assert.equal(timing.watchHandles[0].closed, true, 'stop must close the watch started by the extraction');
+});
+
+test('collectNow persists the snapshot for the cold-start seed', async () => {
+  const userDataPath = tempUserDataPath();
+  const { lane } = createLane({ userDataPath });
+  await lane.collectNow('manual');
+  const persistedPath = path.join(userDataPath, 'trae-collection', 'snapshot.json');
+  assert.ok(fs.existsSync(persistedPath), 'the lane must write snapshot.json beside its work directory');
+  const persisted = JSON.parse(fs.readFileSync(persistedPath, 'utf8'));
+  assert.equal(persisted.periods.allTime.clients.trae, 3000);
+  assert.equal(typeof persisted.capturedAt, 'string');
+  assert.ok(persisted.graph && Array.isArray(persisted.graph.contributions));
+  lane.stop();
+  fs.rmSync(userDataPath, { recursive: true, force: true });
+});
+
+test('applyPersistedTraeCollectionSnapshots seeds periods and history', () => {
+  const userDataPath = tempUserDataPath();
+  const capturedAt = new Date('2026-09-16T12:00:00').toISOString();
+  const snapshot = {
+    periods: {
+      today: { clients: { trae: 100 }, sessions: {} },
+      month: { clients: { trae: 200 }, sessions: {} },
+      allTime: { clients: { trae: 300 }, sessions: {} }
+    },
+    graph: { contributions: [{ date: '2026-09-16', clients: [{ client: 'trae', modelId: 'glm-5.3', tokens: { input: 5, output: 5 }, messages: 1 }] }] },
+    capturedAt,
+    day: '2026-09-16',
+    month: '2026-09'
+  };
+  assert.equal(persistTraeSnapshot(path.join(userDataPath, 'trae-collection'), snapshot), true);
+
+  // Same-day seed: every period merges.
+  const record = { today: { clients: {}, sessions: {} }, month: { clients: {}, sessions: {} }, allTime: { clients: {}, sessions: {} } };
+  applyPersistedTraeCollectionSnapshots(record, {
+    userDataPath,
+    now: new Date('2026-09-16T15:00:00')
+  });
+  assert.equal(record.today.clients.trae, 100);
+  assert.equal(record.month.clients.trae, 200);
+  assert.equal(record.allTime.clients.trae, 300);
+  assert.ok(record.history, 'the persisted graph must seed the history');
+
+  // Next-day seed: today is skipped (the snapshot is yesterday's), month and
+  // allTime still merge.
+  const nextDay = { today: { clients: {}, sessions: {} }, month: { clients: {}, sessions: {} }, allTime: { clients: {}, sessions: {} } };
+  applyPersistedTraeCollectionSnapshots(nextDay, {
+    userDataPath,
+    now: new Date('2026-09-17T09:00:00')
+  });
+  assert.equal(nextDay.today.clients.trae, undefined, 'a yesterday snapshot must not seed today');
+  assert.equal(nextDay.month.clients.trae, 200);
+  assert.equal(nextDay.allTime.clients.trae, 300);
+
+  fs.rmSync(userDataPath, { recursive: true, force: true });
+});
+
+test('applyPersistedTraeCollectionSnapshots ignores a missing or malformed snapshot', () => {
+  const userDataPath = tempUserDataPath();
+  const record = { today: { clients: {}, sessions: {} }, month: { clients: {}, sessions: {} }, allTime: { clients: {}, sessions: {} } };
+  applyPersistedTraeCollectionSnapshots(record, { userDataPath, now: Date.now() });
+  assert.equal(record.allTime.clients.trae, undefined, 'no snapshot file means no merge, not a failure');
+
+  const workDir = path.join(userDataPath, 'trae-collection');
+  fs.mkdirSync(workDir, { recursive: true });
+  fs.writeFileSync(path.join(workDir, 'snapshot.json'), 'not json');
+  applyPersistedTraeCollectionSnapshots(record, { userDataPath, now: Date.now() });
+  assert.equal(record.allTime.clients.trae, undefined, 'a malformed snapshot is ignored');
+
+  fs.rmSync(userDataPath, { recursive: true, force: true });
 });

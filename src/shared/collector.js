@@ -970,6 +970,10 @@ async function collectHistoryOnce(options) {
       const retainedGraph = retainDailyHistory(rawGraphs, {
         ...(options.dailyHistoryArchiveOptions || {}),
         liveDays: options.dailyHistoryLiveDays,
+        // Clients whose usage reaches the summary only through a post-collector
+        // transform (the local Trae lanes). Their tokens must stay out of the
+        // archive's live overlay or the same tick counts them twice.
+        liveDayExcludedClients: options.dailyHistoryLiveDayExcludedClients,
         todayKey,
         capDays,
         writeEnabled: options.dailyHistoryArchiveWriteEnabled
@@ -3326,6 +3330,10 @@ function startCollector(options) {
           const retainedLive = retainLiveDailyHistory(visibleSummary.today, {
             ...(options.dailyHistoryArchiveOptions || {}),
             liveDays: liveDailyHistoryDays,
+            // Same exclusion as the days capture: the visible period already
+            // carries the Trae lanes' post-collector merge, and the tick's
+            // history gets those clients again through that merge.
+            liveDayExcludedClients: options.dailyHistoryLiveDayExcludedClients,
             todayKey: visibleDateKey,
             // Watch ticks update the in-memory maximum on every refresh, but
             // only full/history ticks write it. This avoids a disk write for

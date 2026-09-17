@@ -96,7 +96,8 @@ const { customPricingPath } = require('../shared/tokscaleConfig');
 const { applyCustomPricing, normalizeCustomPricingSetting } = require('../shared/tokscaleCustomPricing');
 const { createHub } = require('../hub/server');
 const { probeHubBuild } = require('./hubBuildStatus');
-const { createTraeCollection } = require('./traeCollection');
+const { applyPersistedTraeCollectionSnapshots, createTraeCollection } = require('./traeCollection');
+const { TRAE_SOURCES } = require('../shared/traeUsage');
 const { claudeWebCookie, deepseekToken, fetchClaudeLimits, normalizeClaudeWebCookieInput, normalizeLimitsRefreshMode, normalizeLimitsRefreshMs, parseBoolean, parseLimitProviders, runCodexLogin, minimaxToken, copilotToken, zaiToken, zaiRegion, zaiTeamToken, volcengineCredentials, qoderCookie, traeAccessToken, traeDeviceId, commandcodeCookie, kimiToken, kimiWebToken, ollamaSessionCookie, zedCookie, alibabaCookie, alibabaVariant, normalizeAlibabaCookieHeader } = require('../shared/limits/collector');
 const { discoverZcodeConnection } = require('../shared/providers/zai/zcodeDiscovery');
 const { fetchOllamaLimits, rememberOllamaValidation } = require('../shared/providers/ollama/limits');
@@ -739,6 +740,11 @@ function electronUsageConfig(errorPrefix) {
     watchDebounceMs: 1500,
     getCustomModelPricing: () => settings.customModelPricing || [],
     dailyHistoryArchiveWriteEnabled: () => !isExternalAgentActive(),
+    // The Trae lanes reach the summary only through the post-collector
+    // transform, so their clients must stay out of the daily archive's live
+    // overlay — the tick's history receives them from that transform and would
+    // count them twice otherwise.
+    dailyHistoryLiveDayExcludedClients: Object.values(TRAE_SOURCES).map((source) => source.client),
     onError: (error, reason) => console.log(`[${errorPrefix}] ${reason}: ${error.message}`),
     logger: (message) => console.log(`[${errorPrefix}] ${message}`)
   });
@@ -4474,6 +4480,15 @@ function primeLocalStatsFromAnchor(usageOptions, widgetProducerOwner) {
     }
   }
   if (!deviceRecord) return;
+  // Lanes first, mirrors traeTransformUsage: the persisted Trae snapshots merge
+  // into the raw anchor record before the archives project over it, so the
+  // seed carries the same Trae contribution every live tick carries. Without
+  // this a cold start opens on totals that miss the Trae lanes entirely (the
+  // anchor is written inside the collector, before the post-collector merge).
+  applyPersistedTraeCollectionSnapshots(deviceRecord, {
+    userDataPath: app.getPath('userData'),
+    now: Date.now()
+  });
   // The anchor holds raw collector output, while everything the renderer is ever
   // shown has been through the archives first. Project the same way or the seed
   // reads low for anyone with an un-tracked client or retained sessions, and then
