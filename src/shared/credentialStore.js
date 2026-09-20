@@ -35,11 +35,7 @@ const CREDENTIAL_SETTING_PATHS = Object.freeze({
   ollamaCookie: ['providers', 'ollama', 'cookie'],
   traeAccessToken: ['providers', 'trae', 'accessToken'],
   traeDeviceId: ['providers', 'trae', 'deviceId'],
-  zedCookie: ['providers', 'zed', 'cookie'],
   traeDbKey: ['providers', 'trae', 'dbKey'],
-  commandcodeCookie: ['providers', 'commandcode', 'cookie'],
-  kimiApiKey: ['providers', 'kimi', 'apiKey'],
-  kimiWebAccessToken: ['providers', 'kimi', 'webAccessToken'],
   alibabaCookie: ['providers', 'alibaba', 'cookie'],
   thirdPartyProfiles: ['providers', 'thirdparty', 'profiles']
 });

@@ -69,7 +69,6 @@ function anchorDeviceRecord(saved, options, trust) {
   const {
     envelope = {},
     clients = '',
-    allTimeSince = '',
     projectsEnabled = true,
     wslScanEnabled = true,
     wslSupported = false,

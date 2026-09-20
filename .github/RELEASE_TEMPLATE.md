@@ -4,31 +4,26 @@
 
 <!-- app-update-notes:en:start -->
 ### Added
-- **Amp usage:** Tracks token usage from Amp sessions. (#694)
-- **Factory Droid limits:** Reads Factory Droid plan quotas and the Extra Usage balance from an automatically detected API key. (#685)
-- **Model aliases:** Merges different names for the same model into one row, with optional automatic duplicate or prefix grouping. (#661)
-- **Native macOS Widgets:** Adds Summary, Activity, Breakdown, Quota, and Dashboard Widgets for macOS 14+. (#642, #689)
+- **Edge Dock:** Adds an opt-in rail at the screen edge for limits and usage, with auto-hide or always-visible modes and hover cards for account limits, recent sessions, and token usage. Configure items under **Settings → Window → Floating & Tray**, or toggle it from the menu bar or system tray. macOS and Windows. (#720)
 
 ### Improved
-- **Sessions:** Pages long session lists. (#693)
+- **macOS tray menu:** Shows ⌘Q beside **Quit Token Monitor**. (#704)
+- **Kimi account:** Leads with the Kimi Code API key; the optional Kimi Web access token only fills quota windows the Code API does not return. (#700)
 
 ### Fixed
-- **Live token rate:** Includes Kimi Code responses in the generation speed. (#695)
-- **Antigravity CLI sessions:** Dates each turn from its own timestamp so it lands on the correct day. (#695)
-- **Cline sessions:** Shows the model that answered each request instead of an unresolved model name. (#695)
-- **OpenRouter costs:** Corrects estimated costs that used the wrong service tier or missed a differently spelled model name. (#695)
-- **WorkBuddy 5.5 usage:** Counts sessions created by WorkBuddy 5.5. (#695)
-- **Session history:** Prevents the app from freezing once the preserved archive grows large. (#693)
-- **Codex sessions in T3 Code:** Shows the session title instead of the first user message. (#692)
+- **Kimi quota:** An API key on its own now shows the Monthly quota with its Kimi/Code breakdown, instead of only 5-hour and Weekly. (#700)
+- **ZCode quota:** Restores Coding Plan and Start/Weekend quota on ZCode 3.12.3 installs. (#719)
+- **ZCode usage:** No longer keeps rescanning in the background on an idle install. (#709)
+- **Antigravity quota:** Reads the daily quota service the Antigravity CLI uses for the 5-hour and Weekly windows, and no longer falls back to an older per-model breakdown when local data is missing or stale. (#706)
+- **Cursor usage:** No longer counts legacy sessions twice, and the 30D view no longer reads high from outdated prices. (#683)
 <!-- app-update-notes:en:end -->
-
 ## Download
 
-- **macOS Apple Silicon** — [Token-Monitor-0.58.1-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.58.1-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-x64.dmg)
-- **Windows Installer** — [Token-Monitor-Setup-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-Setup-0.58.1.exe) (recommended)
-- **Windows Portable** — [Token-Monitor-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.exe) (no install required)
-- **Linux x64** — [Token-Monitor-0.58.1.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.59.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.59.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-x64.dmg)
+- **Windows Installer** — [Token-Monitor-Setup-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-Setup-0.59.0.exe) (recommended)
+- **Windows Portable** — [Token-Monitor-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.exe) (no install required)
+- **Linux x64** — [Token-Monitor-0.59.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.AppImage)
 
 <details>
 <summary><strong>First launch and other notes</strong></summary>
@@ -66,31 +61,27 @@ open-source: https://github.com/junhoyeo/tokscale
 
 <!-- app-update-notes:zh:start -->
 ### 新增
-- **Amp 用量：** 新增 Amp 会话的 Token 用量统计。（#694）
-- **Factory Droid 额度：** 支持自动检测 API 密钥，读取 Factory Droid 方案额度与 Extra Usage 余额。（#685）
-- **模型别名：** 可将同一模型的不同名称合并为一行显示，支持自动合并重复或移除前缀。（#661）
-- **原生 macOS 小部件：** 新增摘要、活动、明细、额度和仪表盘小部件，支持 macOS 14+。（#642, #689）
+- **侧边栏（默认关闭）：** 额度与用量常驻屏幕边缘，支持自动隐藏或始终显示，悬停可查看账号额度、最近会话与 Token 用量。可在 **设置 → 窗口 → 浮窗与系统托盘** 中配置项目，也可从菜单栏或系统托盘开关。支持 macOS 与 Windows。（#720）
 
 ### 改进
-- **会话列表：** 较长时改为分页显示。（#693）
+- **macOS 托盘菜单：** 在“退出 Token Monitor”旁显示 ⌘Q。（#704）
+- **Kimi 账号：** 改以 Kimi Code API 密钥为主，选填的 Kimi Web access token 只用于补齐 Code API 未返回的额度窗口。（#700）
 
 ### 修复
-- **实时 Token 速率：** 生成速度现在也包含 Kimi Code 的响应。（#695）
-- **Antigravity CLI 会话：** 按每轮自身的时间标记归属日期，会话会归入正确的一天。（#695）
-- **Cline 会话：** 显示每次请求实际使用的模型，不再显示无法识别的模型名称。（#695）
-- **OpenRouter 成本：** 修正可能取用错误服务档位价格，或因模型名称写法不同而无法匹配的问题。（#695）
-- **WorkBuddy 5.5 用量：** 统计 WorkBuddy 5.5 创建的会话。（#695）
-- **会话历史：** 保留的历史累积变大后，应用不再卡顿。（#693）
-- **T3 Code 中的 Codex 会话：** 显示会话标题，不再显示首条消息。（#692）
+- **Kimi 额度：** 只填 API 密钥时也会显示 Monthly 额度及其 Kimi/Code 明细，不再只有 5-hour 与 Weekly 窗口。（#700）
+- **ZCode 额度：** 恢复 ZCode 3.12.3 上的 Coding Plan 与 Start/Weekend 额度。（#719）
+- **ZCode 用量：** 闲置时不再反复在后台重扫。（#709）
+- **Antigravity 额度：** 5-hour 与 Weekly 窗口改用 Antigravity CLI 所用的每日额度服务，本地数据缺失或过时时也不再退回旧版按模型划分的显示。（#706）
+- **Cursor 用量：** 不再重复统计旧版会话，30D 也不会因价格过时而偏高。（#683）
 <!-- app-update-notes:zh:end -->
 
 ## 下载
 
-- **macOS Apple Silicon** — [Token-Monitor-0.58.1-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.58.1-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-x64.dmg)
-- **Windows 安装版** — [Token-Monitor-Setup-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-Setup-0.58.1.exe)（推荐）
-- **Windows 便携版** — [Token-Monitor-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.exe)（免安装）
-- **Linux x64** — [Token-Monitor-0.58.1.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.59.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.59.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-x64.dmg)
+- **Windows 安装版** — [Token-Monitor-Setup-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-Setup-0.59.0.exe)（推荐）
+- **Windows 便携版** — [Token-Monitor-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.exe)（免安装）
+- **Linux x64** — [Token-Monitor-0.59.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.AppImage)
 
 <details>
 <summary><strong>首次启动与其他说明</strong></summary>
@@ -123,7 +114,7 @@ https://github.com/junhoyeo/tokscale
 ---
 
 <details>
-<summary><strong>Full Changelog:</strong> <a href="https://github.com/Javis603/token-monitor/compare/v0.57.0...v0.58.1">v0.57.0...v0.58.1</a></summary>
+<summary><strong>Full Changelog:</strong> <a href="https://github.com/Javis603/token-monitor/compare/v0.58.0...v0.59.0">v0.58.0...v0.59.0</a></summary>
 
 <!-- github-generated-release-notes -->
 
@@ -141,31 +132,27 @@ https://github.com/junhoyeo/tokscale
 
 <!-- app-update-notes:zh-TW:start -->
 ### 新增
-- **Amp 用量：** 新增 Amp 會話的 Token 用量統計。（#694）
-- **Factory Droid 額度：** 支援自動偵測 API 金鑰，讀取 Factory Droid 方案額度與 Extra Usage 餘額。（#685）
-- **模型別名：** 可將同一模型的不同名稱合併為一列顯示，支援自動合併重複或移除前綴。（#661）
-- **原生 macOS 小工具：** 新增摘要、活動、明細、額度與儀表板小工具，支援 macOS 14+。（#642, #689）
+- **側邊欄（預設關閉）：** 額度與用量常駐螢幕邊緣，支援自動隱藏或永遠顯示，游標移入可查看帳號額度、最近會話與 Token 用量。可在 **設定 → 視窗 → 浮窗與系統列** 中設定項目，也可從選單列或系統匣開關。支援 macOS 與 Windows。（#720）
 
 ### 改進
-- **會話列表：** 較長時改為分頁顯示。（#693）
+- **macOS 系統匣選單：** 在「結束 Token Monitor」旁顯示 ⌘Q。（#704）
+- **Kimi 帳號：** 改以 Kimi Code API 金鑰為主，選填的 Kimi Web access token 只用於補齊 Code API 未回傳的額度窗口。（#700）
 
 ### 修復
-- **即時 Token 速率：** 生成速度現在也包含 Kimi Code 的回應。（#695）
-- **Antigravity CLI 會話：** 依每輪自身時間標記歸屬日期，歸入正確的一天。（#695）
-- **Cline 會話：** 顯示每次請求實際使用的模型，不再顯示無法辨識的模型名稱。（#695）
-- **OpenRouter 成本：** 修正可能取用錯誤服務層級價格，或因模型名稱寫法不同而無法匹配的問題。（#695）
-- **WorkBuddy 5.5 用量：** 統計 WorkBuddy 5.5 建立的會話。（#695）
-- **會話記錄：** 保留的歷史累積變大後，應用不再卡頓。（#693）
-- **T3 Code 中的 Codex 會話：** 顯示會話標題，不再顯示首則訊息。（#692）
+- **Kimi 額度：** 只填 API 金鑰時也會顯示 Monthly 額度及其 Kimi/Code 明細，不再只有 5-hour 與 Weekly 窗口。（#700）
+- **ZCode 額度：** 恢復 ZCode 3.12.3 上的 Coding Plan 與 Start/Weekend 額度。（#719）
+- **ZCode 用量：** 閒置時不再反覆在背景重掃。（#709）
+- **Antigravity 額度：** 5-hour 與 Weekly 窗口改用 Antigravity CLI 所用的每日額度服務，本機資料缺失或過期時也不再退回舊版按模型劃分的顯示。（#706）
+- **Cursor 用量：** 不再重複計入舊版會話，30D 也不會因價格過期而偏高。（#683）
 <!-- app-update-notes:zh-TW:end -->
 
 ## 下載
 
-- **macOS Apple Silicon** — [Token-Monitor-0.58.1-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.58.1-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-x64.dmg)
-- **Windows 安裝版** — [Token-Monitor-Setup-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-Setup-0.58.1.exe)（推薦）
-- **Windows 便攜版** — [Token-Monitor-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.exe)（免安裝）
-- **Linux x64** — [Token-Monitor-0.58.1.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.59.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.59.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-x64.dmg)
+- **Windows 安裝版** — [Token-Monitor-Setup-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-Setup-0.59.0.exe)（推薦）
+- **Windows 便攜版** — [Token-Monitor-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.exe)（免安裝）
+- **Linux x64** — [Token-Monitor-0.59.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.AppImage)
 
 </details>
 
@@ -178,31 +165,27 @@ https://github.com/junhoyeo/tokscale
 
 <!-- app-update-notes:ko:start -->
 ### 추가
-- **Amp 사용량:** Amp 세션의 토큰 사용량을 추적합니다. (#694)
-- **Factory Droid 할당량:** API 키를 자동으로 감지해 Factory Droid 플랜 할당량과 Extra Usage 잔액을 읽습니다. (#685)
-- **모델 별칭:** 같은 모델의 서로 다른 이름을 한 줄로 묶어 표시하며, 중복 병합이나 접두사 제거를 선택할 수 있습니다. (#661)
-- **네이티브 macOS 위젯:** 요약, 활동, 분석, 할당량, 대시보드 위젯을 macOS 14+에 추가합니다. (#642, #689)
+- **가장자리 도크(기본 꺼짐):** 화면 가장자리에 한도와 사용량을 표시하는 레일을 추가합니다. 자동 숨김 또는 항상 표시를 고를 수 있고, 계정 한도·최근 세션·토큰 사용량을 보여 주는 카드도 표시됩니다. **설정 → 창 → 플로팅 및 트레이**에서 구성하거나 메뉴 막대나 시스템 트레이에서 켤 수 있습니다. macOS와 Windows. (#720)
 
 ### 개선
-- **세션 목록:** 세션이 많으면 페이지로 나누어 표시합니다. (#693)
+- **macOS 트레이 메뉴:** **Token Monitor 종료** 옆에 ⌘Q를 표시합니다. (#704)
+- **Kimi 계정:** Kimi Code API 키를 기준으로 하며, 선택 사항인 Kimi Web access token은 Code API가 반환하지 않는 할당량 창만 채웁니다. (#700)
 
 ### 수정
-- **실시간 토큰 속도:** 생성 속도에 Kimi Code 응답도 포함합니다. (#695)
-- **Antigravity CLI 세션:** 각 턴의 자체 시간을 기준으로 날짜를 판단해 올바른 날에 표시합니다. (#695)
-- **Cline 세션:** 각 요청을 실제로 처리한 모델을 표시하고, 확인되지 않은 모델 이름을 표시하지 않습니다. (#695)
-- **OpenRouter 비용:** 잘못된 서비스 등급 가격을 사용하거나 모델 이름 표기가 달라 매칭되지 않던 문제를 수정했습니다. (#695)
-- **WorkBuddy 5.5 사용량:** WorkBuddy 5.5에서 만든 세션을 집계합니다. (#695)
-- **세션 기록:** 보관된 기록이 커져도 앱이 멈추지 않습니다. (#693)
-- **T3 Code의 Codex 세션:** 첫 메시지 대신 세션 제목을 표시합니다. (#692)
+- **Kimi 할당량:** API 키만 있어도 Monthly 할당량과 Kimi/Code 내역이 표시됩니다. 이전에는 5-hour와 Weekly만 표시되었습니다. (#700)
+- **ZCode 할당량:** ZCode 3.12.3 환경에서 Coding Plan과 Start/Weekend 할당량이 다시 표시됩니다. (#719)
+- **ZCode 사용량:** 유휴 상태에서도 백그라운드 재스캔이 반복되던 문제를 수정했습니다. (#709)
+- **Antigravity 할당량:** 5-hour 및 Weekly 창이 Antigravity CLI가 사용하는 일일 할당량 서비스를 읽으며, 로컬 데이터가 없거나 오래되어도 이전 방식의 모델별 표시로 되돌아가지 않습니다. (#706)
+- **Cursor 사용량:** 레거시 세션을 두 번 집계하지 않으며, 30D도 오래된 가격 때문에 높게 표시되지 않습니다. (#683)
 <!-- app-update-notes:ko:end -->
 
 ## 다운로드
 
-- **macOS Apple Silicon** — [Token-Monitor-0.58.1-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.58.1-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-x64.dmg)
-- **Windows 설치 버전** — [Token-Monitor-Setup-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-Setup-0.58.1.exe) (권장)
-- **Windows 포터블 버전** — [Token-Monitor-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.exe) (설치 필요 없음)
-- **Linux x64** — [Token-Monitor-0.58.1.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.59.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.59.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-x64.dmg)
+- **Windows 설치 버전** — [Token-Monitor-Setup-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-Setup-0.59.0.exe) (권장)
+- **Windows 포터블 버전** — [Token-Monitor-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.exe) (설치 필요 없음)
+- **Linux x64** — [Token-Monitor-0.59.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.AppImage)
 
 </details>
 
@@ -215,32 +198,29 @@ https://github.com/junhoyeo/tokscale
 
 <!-- app-update-notes:ja:start -->
 ### 追加
-- **Amp の使用量：** Amp セッションのトークン使用量を集計します。（#694）
-- **Factory Droid のクォータ：** API キーを自動検出し、Factory Droid のプランクォータと Extra Usage 残高を読み取ります。（#685）
-- **モデルの別名：** 同じモデルの異なる名前を 1 行にまとめて表示し、重複の統合や接頭辞の削除を選べます。（#661）
-- **ネイティブ macOS ウィジェット：** サマリー、アクティビティ、内訳、クォータ、ダッシュボードのウィジェットを macOS 14 以降に追加します。（#642, #689）
+- **エッジドック（既定ではオフ）：** 画面の端に上限と使用量を表示するレールを追加します。自動的に隠す／常に表示を選べ、アカウント上限・最近のセッション・トークン使用量を示すカードも表示されます。**設定 → ウィンドウ → フローティング＆トレイ**で構成するか、メニューバーやシステムトレイから切り替えられます。macOS と Windows に対応。（#720）
 
 ### 改善
-- **セッション一覧：** セッションが多い場合はページに分けて表示します。（#693）
+- **macOS のトレイメニュー：** 「Token Monitorを終了」の横に ⌘Q を表示します。（#704）
+- **Kimi アカウント：** Kimi Code API キーを主とし、任意の Kimi Web access token は Code API が返さないクォータ枠を補う場合にのみ使われます。（#700）
 
 ### 修正
-- **ライブ Token レート：** 生成速度に Kimi Code の応答も含めます。（#695）
-- **Antigravity CLI のセッション：** 各ターン自身の時刻で日付を判定し、正しい日に表示します。（#695）
-- **Cline のセッション：** 各リクエストを実際に処理したモデルを表示し、判別できないモデル名を表示しません。（#695）
-- **OpenRouter のコスト：** 誤ったサービス階層の価格を使ったり、モデル名の表記違いで一致しなかったりする問題を修正しました。（#695）
-- **WorkBuddy 5.5 の使用量：** WorkBuddy 5.5 が作成したセッションを集計します。（#695）
-- **セッション履歴：** 保持した履歴が大きくなってもアプリが固まりません。（#693）
-- **T3 Code の Codex セッション：** 最初のメッセージではなくセッションタイトルを表示します。（#692）
+- **Kimi のクォータ：** API キーだけでも Monthly クォータと Kimi/Code の内訳が表示されます。以前は 5-hour と Weekly のみでした。（#700）
+- **ZCode のクォータ：** ZCode 3.12.3 の環境で Coding Plan と Start/Weekend のクォータが再び表示されます。（#719）
+- **ZCode の使用量：** アイドル状態でもバックグラウンドの再スキャンが繰り返される問題を修正しました。（#709）
+- **Antigravity のクォータ：** 5-hour と Weekly の枠が Antigravity CLI と同じ日次クォータサービスを参照するようになり、ローカルデータがない場合や古い場合でも以前のモデル別表示に戻りません。（#706）
+- **Cursor の使用量：** 旧形式のセッションを二重に集計せず、30D も古い価格によって高く表示されません。（#683）
 <!-- app-update-notes:ja:end -->
 
 ## ダウンロード
 
-- **macOS Apple Silicon** — [Token-Monitor-0.58.1-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.58.1-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1-x64.dmg)
-- **Windows インストーラー** — [Token-Monitor-Setup-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-Setup-0.58.1.exe)（推奨）
-- **Windows ポータブル版** — [Token-Monitor-0.58.1.exe](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.exe)（インストール不要）
-- **Linux x64** — [Token-Monitor-0.58.1.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.58.1/Token-Monitor-0.58.1.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.59.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.59.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0-x64.dmg)
+- **Windows インストーラー** — [Token-Monitor-Setup-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-Setup-0.59.0.exe)（推奨）
+- **Windows ポータブル版** — [Token-Monitor-0.59.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.exe)（インストール不要）
+- **Linux x64** — [Token-Monitor-0.59.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.59.0/Token-Monitor-0.59.0.AppImage)
 
 </details>
 
 </details>
+

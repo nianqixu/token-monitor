@@ -788,6 +788,7 @@ test('limit percent tray mode renders provider icons into a generated tray image
   assert.doesNotMatch(renderLimitSessionsIcon, /limitFillPercent/);
   assert.match(renderLimitSessionsIcon, /·/);
   assert.match(maybeUpdateBarsIcon, /TokenMonitorTrayText\.isGeneratedTrayIconMode\(mode\)/);
+  assert.match(maybeUpdateBarsIcon, /edgeDockAvailable\(\) && state\.settings\?\.edgeDockEnabled === true\) edgeDockComposer\?\.render\(\)/);
   assert.match(maybeUpdateBarsIcon, /trayDataUrlForMode\(mode, 44, colors, \{ trayInk: true \}\)/);
   // The tray ink must come from the platform-aware helper, not the app theme:
   // macOS needs the black its template inversion expects, while a dark Windows
@@ -1194,6 +1195,7 @@ test('Codex renders Monthly quota and manual reset credits below rolling windows
   assert.match(main, /showCodexAdditionalLimits: true/);
   assert.match(main, /showCodexAdditionalLimits = parseBoolean\(merged\.showCodexAdditionalLimits, true\)/);
   assert.match(main, /showCodexAdditionalLimits: parseBoolean\(patch\.showCodexAdditionalLimits \?\? settings\.showCodexAdditionalLimits, true\)/);
+  assert.match(main, /showCodexAdditionalLimits: settings\?\.showCodexAdditionalLimits !== false/);
   assert.match(app, /key: 'showCodexAdditionalLimits',[\s\S]*?defaultValue: true/);
   assert.match(renderProviderWindows, /state\.settings\?\.showCodexAdditionalLimits === false\s*\? \[\]\s*: \(provider\.windows \|\| \[\]\)\.filter\(\(window\) => window\?\.additional === true\);/);
   assert.match(renderProviderWindows, /codexAdditionalWindowLabel\(additional, additionalWindows\)/);

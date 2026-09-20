@@ -944,6 +944,27 @@ function propagateTodayProjects(today, periods) {
       }
       if (session.title && !target.title) target.title = session.title;
       if (session.sessionKind && !target.sessionKind) target.sessionKind = session.sessionKind;
+      // Context occupancy is replaced rather than gap-filled: the derived
+      // periods carry the last full scan's reading, which is older than this
+      // tick's by construction. The copy is unconditional, including a cleared
+      // pair — the fresh scan is the authority, and a tick that read no valid
+      // pair (a DSH model switch drops the occupancy until the next usage chunk
+      // measures against the new window) must clear the stale one rather than
+      // leave the derived period showing a gauge the fresh scan dropped. The
+      // dock card reads month first, so it was the surface that displayed it.
+      target.contextWindow = Number(session.contextWindow) || 0;
+      target.contextTokens = Number(session.contextTokens) || 0;
+      // The turn boundary is copied in all three states, matching what the
+      // fresh scan said: `true` finished, `false` open, absent unknown. Copying
+      // only `true` left a stale `true` in a derived period after its session
+      // picked the next turn back up, and collapsing `false` into "delete" lost the
+      // one value that can clear it — the dock card reads month first, so it kept
+      // showing a finished session while today showed it running.
+      if (session.turnEnded === true || session.turnEnded === false) {
+        target.turnEnded = session.turnEnded;
+      } else {
+        delete target.turnEnded;
+      }
       if (session.startedAt && (!target.startedAt || Date.parse(session.startedAt) < Date.parse(target.startedAt))) {
         target.startedAt = session.startedAt;
       }
