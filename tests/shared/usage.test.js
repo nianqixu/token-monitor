@@ -870,13 +870,19 @@ test('extractUsageFromTokscale normalizes Pi, Zed, and Kilo, keeping Copilot dis
   assert.equal(period.clients.kilo, 19);
 });
 
-test('extractUsageFromTokscale normalizes MiMo Code and ZCode client ids', () => {
+test('extractUsageFromTokscale normalizes MiMo and ZCode client ids', () => {
+  // `micode` is tokscale's id for MiMo — a fossil of the path typo upstream
+  // fixed in its PR #784, which left the id behind. Token Monitor's id is
+  // `mimo`, shared with the limits provider for the same product, so both
+  // upstream spellings have to land there.
   const period = extractUsageFromTokscale([
     { client: 'micode', model: 'mimo-v2.5-pro', totalTokens: 23 },
+    { client: 'micode-desktop', model: 'mimo-v2.5-pro', totalTokens: 5 },
     { client: 'ZCode', model: 'glm-4.7', totalTokens: 29 }
   ]);
 
-  assert.equal(period.clients.micode, 23);
+  assert.equal(period.clients.mimo, 28);
+  assert.equal(period.clients.micode, undefined);
   assert.equal(period.clients.zcode, 29);
 });
 
@@ -1010,10 +1016,10 @@ test('extractUsageFromTokscale uses one resolved row cost for period and session
   assert.equal(seen[0].provider, 'mimo');
   assert.equal(seen[0].originalCost, 99);
   assert.equal(period.costUsd, 0.25);
-  assert.equal(period.clientCosts.micode, 0.25);
+  assert.equal(period.clientCosts.mimo, 0.25);
   assert.equal(period.modelCosts['mimo-v2.5-pro'], 0.25);
-  assert.equal(period.sessions['micode:session-1'].costUsd, 0.25);
-  assert.equal(period.sessions['micode:session-1'].modelCosts['mimo-v2.5-pro'], 0.25);
+  assert.equal(period.sessions['mimo:session-1'].costUsd, 0.25);
+  assert.equal(period.sessions['mimo:session-1'].modelCosts['mimo-v2.5-pro'], 0.25);
 });
 
 test('extractUsageFromTokscale retains reported cost when a resolver declines or fails', () => {
@@ -1039,42 +1045,6 @@ test('extractUsageBundleFromTokscale partitions every aggregate field exactly by
     mergePeriods(bundle.byClient.claude, bundle.byClient.codex),
     bundle.period
   );
-});
-
-test('extractUsageFromTokscale uses one resolved row cost for period and session rollups', () => {
-  const row = {
-    client: 'MiCode',
-    sessionId: 'session-1',
-    model: 'mimo-v2.5-pro',
-    provider: 'mimo',
-    input: 10,
-    output: 5,
-    cost: 99
-  };
-  const seen = [];
-  const period = extractUsageFromTokscale([row], {
-    costResolver: (context) => {
-      seen.push(context);
-      return 0.25;
-    }
-  });
-
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].model, 'mimo-v2.5-pro');
-  assert.equal(seen[0].provider, 'mimo');
-  assert.equal(seen[0].originalCost, 99);
-  assert.equal(period.costUsd, 0.25);
-  assert.equal(period.clientCosts.micode, 0.25);
-  assert.equal(period.modelCosts['mimo-v2.5-pro'], 0.25);
-  assert.equal(period.sessions['micode:session-1'].costUsd, 0.25);
-  assert.equal(period.sessions['micode:session-1'].modelCosts['mimo-v2.5-pro'], 0.25);
-});
-
-test('extractUsageFromTokscale retains reported cost when a resolver declines or fails', () => {
-  const row = { client: 'Codex', model: 'gpt-5', input: 10, cost: 0.75 };
-  assert.equal(extractUsageFromTokscale([row], { costResolver: () => undefined }).costUsd, 0.75);
-  assert.equal(extractUsageFromTokscale([row], { costResolver: () => { throw new Error('bad resolver'); } }).costUsd, 0.75);
-  assert.equal(extractUsageFromTokscale([row], { costResolver: () => Number.NaN }).costUsd, 0.75);
 });
 
 test('extractUsageFromTokscale folds disjoint Codex reasoning into the public output bucket', () => {
@@ -1556,4 +1526,31 @@ test('merging a session keeps one source occupancy rather than summing two', () 
   });
   assert.equal(unknown.periods.today.sessions[key].contextTokens, 140);
   assert.equal(unknown.periods.today.sessions[key].contextWindow, 200_000);
+});
+
+test('aggregateDevices folds a pre-rename micode device into the mimo row', () => {
+  // The tracked-client id was renamed from tokscale's `micode` to `mimo`. A hub
+  // outlives any single device update, so it holds records posted by agents on
+  // both sides of that rename — and aggregateDevices normalizes on *read*, not
+  // only on ingest, so a record already sitting in data/devices.json folds too.
+  // Without that the same tool would show as two rows until every device
+  // upgraded.
+  const now = Date.parse('2026-09-23T00:00:00.000Z');
+  const deviceAt = (deviceId, client, tokens, cost) => ({
+    deviceId,
+    hostname: deviceId,
+    updatedAt: '2026-09-23T00:00:00.000Z',
+    receivedAt: '2026-09-23T00:00:00.000Z',
+    today: { totalTokens: tokens, costUsd: cost, clients: { [client]: tokens }, clientCosts: { [client]: cost } }
+  });
+
+  const aggregate = aggregateDevices(
+    [deviceAt('old-agent', 'micode', 100, 1.5), deviceAt('new-agent', 'mimo', 40, 0.5)],
+    0,
+    now
+  );
+
+  assert.equal(aggregate.periods.today.clients.mimo, 140);
+  assert.equal(aggregate.periods.today.clients.micode, undefined);
+  assert.equal(aggregate.periods.today.clientCosts.mimo, 2);
 });

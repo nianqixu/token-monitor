@@ -12,6 +12,61 @@ function readRendererFile(name) {
   return fs.readFileSync(path.join(rendererDir, name), 'utf8');
 }
 
+test('detail cards keep exact token counts while the narrow rail stays compact', () => {
+  const dock = readRendererFile(path.join('edgeDock', 'dock.js'));
+  const formatCardTokens = Function(`return (${dock.match(/function formatCardTokens\(value\) \{[^}]+\}/)[0]})`)();
+  assert.equal(formatCardTokens(216_935_653), '216,935,653');
+  assert.equal(formatCardTokens(162_821_017), '162,821,017');
+  assert.match(dock, /edge-dock-stat-value', formatTokens\(cell\.totalTokens\)/);
+  assert.match(dock, /edge-dock-total-row'[\s\S]*?formatCardTokens\(cell\.totalTokens\)/);
+  assert.match(dock, /edge-dock-client-tokens', formatCardTokens\(entry\.tokens\)/);
+  assert.match(dock, /edge-dock-session-tokens', formatCardTokens\(session\.totalTokens\)/);
+});
+
+test('the detail total follows the main app compact toggle and unit threshold', () => {
+  const dock = readRendererFile(path.join('edgeDock', 'dock.js'));
+  const main = fs.readFileSync(path.join(rendererDir, '..', 'main.js'), 'utf8');
+  const source = dock.slice(dock.indexOf('function compactCardTotal('), dock.indexOf('function formatCost(')).trim();
+  const appearance = { showCompactTotalTokens: false, compactTokenUnits: 'western' };
+  const state = { locale: 'zh-TW' };
+  const compactCardTotal = Function('appearance', 'state', 'compactTokenApi', `return (${source})`)(
+    () => appearance, state, require('../../src/shared/compactTokens')
+  );
+  assert.equal(compactCardTotal(223_451_737), '');
+  appearance.showCompactTotalTokens = true;
+  assert.equal(compactCardTotal(223_451_737), '≈ 223.5M');
+  assert.equal(compactCardTotal(999), '');
+  appearance.compactTokenUnits = 'localized';
+  assert.equal(compactCardTotal(9_999), '');
+  assert.equal(compactCardTotal(223_451_737), '≈ 2.23億');
+  assert.match(main, /function edgeDockAppearance\([\s\S]*?showCompactTotalTokens: source\.showCompactTotalTokens/);
+  assert.match(dock, /if \(compact\) \{[\s\S]*?el\('span', 'edge-dock-total-compact', compact\)[\s\S]*?totalRow\.append\(compactNode\)/);
+});
+
+test('a long detail total shrinks beside its compact reading instead of wrapping', () => {
+  const dock = readRendererFile(path.join('edgeDock', 'dock.js'));
+  const css = readRendererFile(path.join('edgeDock', 'dock.css'));
+  const source = dock.slice(dock.indexOf('function fitCardTotal('), dock.indexOf('function renderBubble(')).trim();
+  const fitCardTotal = Function('getComputedStyle', `return (${source})`)((node) => (
+    node.columnGap === undefined ? { fontSize: '30px' } : { columnGap: '8px' }
+  ));
+  const number = { style: {}, getBoundingClientRect: () => ({ width: 236 }) };
+  const compact = { getBoundingClientRect: () => ({ width: 47 }) };
+  const row = {
+    clientWidth: 252,
+    columnGap: '8px',
+    querySelector: (selector) => selector === 'strong' ? number : compact
+  };
+  fitCardTotal({ querySelector: () => row });
+  assert.equal(number.style.fontSize, '24px');
+  number.style = {};
+  row.querySelector = (selector) => selector === 'strong' ? number : null;
+  fitCardTotal({ querySelector: () => row });
+  assert.equal(number.style.fontSize, undefined);
+  assert.match(css, /\.edge-dock-total-row \{[^}]*white-space: nowrap/);
+  assert.ok(dock.indexOf('fitCardTotal(card);') < dock.indexOf('const height = Math.ceil(card.getBoundingClientRect().height)'));
+});
+
 const {
   EDGE_DOCK_METRICS,
   EDGE_DOCK_TIMING,
@@ -163,7 +218,7 @@ test('the dock keeps the token total, adds headroom, and dots running rows inste
   const app = readRendererFile('app.js');
   // The token total must survive: headroom is additional, not a replacement for
   // the figure the row already carried.
-  assert.match(dock, /el\('span', 'edge-dock-session-tokens', formatTokens\(session\.totalTokens\)\)/);
+  assert.match(dock, /el\('span', 'edge-dock-session-tokens', formatCardTokens\(session\.totalTokens\)\)/);
   // ...and both live on the same row, with the context reading appended to the
   // meta line rather than taking the token column.
   const sessions = dock.slice(dock.indexOf('function sessionsNode('), dock.indexOf('function providerCard('));
@@ -1244,6 +1299,66 @@ test('explicit items keep their order, their empty providers, and add usage read
   // Tokens are attributed through the catalog's client→provider mapping.
   assert.deepEqual(factory.usage.today, { tokens: 50, costUsd: 0 });
   assert.equal(claude.usage, null);
+});
+
+test('period cells carry model rows without dropping unattributed usage', () => {
+  const stats = {
+    periods: {
+      today: {
+        totalTokens: 100,
+        costUsd: 1,
+        clients: { codex: 100 },
+        models: { 'gpt-5': 60, 'claude-sonnet-4': 20 },
+        modelCosts: { 'gpt-5': 0.6, 'claude-sonnet-4': 0.2 }
+      }
+    },
+    limits: { providers: [] }
+  };
+  const [cell] = buildEdgeDockCells(stats, { items: [{ type: 'stat', metric: 'today' }] });
+  assert.deepEqual(cell.models, [
+    { model: 'gpt-5', tokens: 60, costUsd: 0.6, unattributed: false },
+    { model: 'claude-sonnet-4', tokens: 20, costUsd: 0.2, unattributed: false },
+    { model: '__unattributed', tokens: 20, costUsd: 0.2, unattributed: true }
+  ]);
+  assert.deepEqual(cell.clients, [
+    { client: 'codex', tokens: 100, costUsd: 0, unattributed: false }
+  ]);
+});
+
+test('period cells keep rows beyond the six-row card viewport', () => {
+  const clients = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`tool-${index + 1}`, index + 1]));
+  const models = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [`model-${index + 1}`, index + 1]));
+  const stats = {
+    periods: { today: { totalTokens: 36, costUsd: 0, clients, models } },
+    limits: { providers: [] }
+  };
+  const [cell] = buildEdgeDockCells(stats, { items: [{ type: 'stat', metric: 'today' }] });
+  assert.deepEqual(cell.clients.map((row) => row.client), [
+    'tool-8', 'tool-7', 'tool-6', 'tool-5', 'tool-4', 'tool-3', 'tool-2', 'tool-1'
+  ]);
+  assert.deepEqual(cell.models.map((row) => row.model), [
+    'model-8', 'model-7', 'model-6', 'model-5', 'model-4', 'model-3', 'model-2', 'model-1'
+  ]);
+});
+
+test('period cards expose an accessible tools and models switch', () => {
+  const dock = readRendererFile(path.join('edgeDock', 'dock.js'));
+  const card = dock.slice(dock.indexOf('function statCard('), dock.indexOf('function sessionsCard('));
+  assert.match(card, /for \(const mode of \['tools', 'models'\]\)/);
+  assert.match(card, /button\.setAttribute\('aria-pressed', String\(breakdownMode === mode\)\)/);
+  // The card is rebuilt on every repaint, so a click-only listener loses the
+  // activation when a rebuild lands between press and release. The switch goes
+  // through the shared press-activation helper instead.
+  assert.match(card, /activateOnPress\(button, \(\) => \{/);
+  assert.doesNotMatch(card, /button\.addEventListener\('click'/);
+  assert.match(card, /state\.breakdownMode = mode;\s+renderBubble\(state\.payload\);/);
+  assert.match(card, /modelVendorFor\(model\.model\) \|\| 'token-monitor'/);
+  assert.match(card, /t\('dashboard\.tooltip\.unclassified'\)/);
+  assert.doesNotMatch(card, /edgeDock\.more(?:Models|Clients)/);
+  const bubble = dock.slice(dock.indexOf('function clampBreakdownList('), dock.indexOf('// ---- Wiring'));
+  assert.match(bubble, /rows\[BREAKDOWN_VISIBLE_ROWS - 1\]\.getBoundingClientRect\(\)/);
+  assert.match(bubble, /list\.style\.maxHeight = `\$\{height\}px`/);
+  assert.match(bubble, /stagingLayer\.replaceChildren\(card\);\s+fitCardTotal\(card\);\s+clampBreakdownList\(card\);/);
 });
 
 test('provider cards list the newest sessions of their own clients this month', () => {

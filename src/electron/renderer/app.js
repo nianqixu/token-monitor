@@ -22,8 +22,8 @@ const tokenRateApi = window.TokenMonitorTokenRate;
 const { tokenRatePerSecond, tokenBurnPerMinute } = tokenRateApi;
 const reducedMotionMedia = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 const clientsWithIcon = new Set([
-  'claude', 'codex', 'opencode', 'hermes', 'openclaw', 'cursor', 'antigravity', 'cline', 'amp', 'droid', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilo', 'commandcode', 'micode', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'proma', 'qodercn', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio', 'unsloth',
-  'gemini', 'xai', 'openrouter', 'deepseek', 'meta', 'mistral', 'moonshot', 'zai', 'zaiteam', 'cohere', 'xiaomi', 'mimo', 'minimax', 'doubao', 'volcengine', 'qoder', 'trae', 'traework', 'ollama', 'thirdparty', 'hunyuan', 'nvidia', 'stepfun'
+  'claude', 'codex', 'opencode', 'hermes', 'openclaw', 'cursor', 'antigravity', 'cline', 'amp', 'droid', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilo', 'commandcode', 'mimo', 'zcode', 'kiro', 'codebuddy', 'workbuddy', 'proma', 'qodercn', 'reasonix', 'dsh', 'cherrystudio', 'lmstudio', 'unsloth', 'devin',
+  'gemini', 'xai', 'openrouter', 'deepseek', 'meta', 'mistral', 'moonshot', 'zai', 'zaiteam', 'cohere', 'xiaomi', 'minimax', 'doubao', 'volcengine', 'qoder', 'trae', 'traework', 'ollama', 'thirdparty', 'hunyuan', 'nvidia', 'stepfun'
 ]);
 // Limits rows mark more ids than there are tracked clients: every provider, plus
 // relay ids that only ever appear as a limits row and have no catalog entry.
@@ -91,6 +91,7 @@ const LIMIT_PROVIDER_ACCOUNT_GROUP_IDS = {
   opencode: 'opencodeCookieGroup',
   cursor: 'cursorAccountGroup',
   antigravity: 'antigravityAccountGroup',
+  cline: 'clineAccountGroup',
   factory: 'factoryAccountGroup',
   kimi: 'kimiAccountGroup',
   copilot: 'copilotAccountGroup',
@@ -101,6 +102,7 @@ const LIMIT_PROVIDER_ACCOUNT_GROUP_IDS = {
   zaiteam: 'zaiteamAccountGroup',
   qoder: 'qoderAccountGroup',
   deepseek: 'deepseekAccountGroup',
+  devin: 'devinAccountGroup',
   openrouter: 'openrouterAccountGroup',
   minimax: 'minimaxAccountGroup',
   volcengine: 'volcengineAccountGroup',
@@ -115,6 +117,7 @@ const LIMIT_PROVIDER_ACCOUNT_STATUS_IDS = {
   opencode: 'opencodeCookieStatus',
   cursor: 'cursorAccountStatus',
   antigravity: 'antigravityAccountStatus',
+  cline: 'clineAccountStatus',
   factory: 'factoryAccountStatus',
   kimi: 'kimiAccountStatus',
   copilot: 'copilotApiTokenStatus',
@@ -125,6 +128,7 @@ const LIMIT_PROVIDER_ACCOUNT_STATUS_IDS = {
   zaiteam: 'zaiteamAccountStatus',
   qoder: 'qoderAccountStatus',
   deepseek: 'deepseekApiKeyStatus',
+  devin: 'devinAccountStatus',
   openrouter: 'openrouterStatus',
   minimax: 'minimaxApiKeyStatus',
   volcengine: 'volcengineAccountStatus',
@@ -135,6 +139,7 @@ const LIMIT_PROVIDER_ACCOUNT_STATUS_IDS = {
 };
 const LIMIT_PROVIDER_CONNECTION_DETAIL_KEYS = {
   antigravity: 'settings.limits.connection.antigravity',
+  cline: 'settings.limits.connection.cline',
   grok: 'settings.limits.connection.grok',
   kiro: 'settings.limits.connection.kiro',
   workbuddy: 'settings.limits.connection.workbuddy'
@@ -170,7 +175,6 @@ const codexAccountControlApi = window.TokenMonitorCodexAccountControl;
 
 function limitProviderColor(providerId) {
   if (providerId === 'factory') return clientColors.droid;
-  if (providerId === 'mimo') return clientColors.xiaomi;
   return clientColors[providerId] || clientColors.default;
 }
 const limitResetMotionApi = window.TokenMonitorLimitResetMotion;
@@ -256,6 +260,7 @@ const LIMIT_CAPABILITY_TAG_KEYS = {
   'Sign in again': 'settings.limits.status.signInAgain',
   'Run grok login': 'settings.limits.status.runGrokLogin',
   'Run kiro-cli login': 'settings.limits.status.runKiroLogin',
+  'Open Cline': 'settings.limits.status.openCline',
   'Re-login': 'settings.limits.status.relogin',
   Limited: 'settings.limits.status.limited',
   'Usage API limited': 'settings.limits.status.usageApiLimited',
@@ -328,7 +333,9 @@ function normalizeInitialViewValue(value, allowed, fallback) {
   return allowed.has(raw) ? raw : fallback;
 }
 
-const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, windowVisible: new URLSearchParams(window.location.search).get('windowHidden') !== '1', stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, factoryAccountExpanded: false, factoryPendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', antigravityAccountExpanded: false, antigravityAccountError: '', antigravitySignInBusy: false, copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false, toolSearchQuery: '', limitProviderSearchQuery: '' };
+const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, windowVisible: new URLSearchParams(window.location.search).get('windowHidden') !== '1', stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, factoryAccountExpanded: false, factoryPendingCheckSince: 0, clineAccountExpanded: false, clinePendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', antigravityAccountExpanded: false, antigravityAccountError: '', antigravitySignInBusy: false, copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false, toolSearchQuery: '', limitProviderSearchQuery: '' };
+state.devinAccountExpanded = false;
+state.devinPendingCheckSince = 0;
 state.zedAccountExpanded = false;
 state.zedPendingCheckSince = 0;
 state.toolDetailMode = 'tokens';
@@ -413,6 +420,8 @@ Object.assign(els, {
   edgeDockOptions: document.getElementById('edgeDockOptions'),
   edgeDockSideInputs: Array.from(document.querySelectorAll('input[name="edgeDockSide"]')),
   edgeDockModeInputs: Array.from(document.querySelectorAll('input[name="edgeDockMode"]')),
+  edgeDockHapticRow: document.getElementById('edgeDockHapticRow'),
+  edgeDockHapticInput: document.getElementById('edgeDockHapticInput'),
   edgeDockWarnColorsInput: document.getElementById('edgeDockWarnColorsInput'),
   edgeDockComposer: document.getElementById('edgeDockComposer'),
   trayIconOptions: document.getElementById('trayIconOptions'),
@@ -8084,11 +8093,13 @@ function syncSettingsForm() {
   renderDeepseekStatus();
   renderMinimaxStatus();
   renderExternalProviderStatus('claude');
+  renderExternalProviderStatus('cline');
   renderExternalProviderStatus('factory');
   renderExternalProviderStatus('zai');
   renderExternalProviderStatus('zaiteam');
   renderExternalProviderStatus('volcengine');
   renderExternalProviderStatus('qoder');
+  renderExternalProviderStatus('devin');
   renderExternalProviderStatus('trae');
   renderExternalProviderStatus('zed');
   renderExternalProviderStatus('commandcode');
@@ -11697,6 +11708,8 @@ function syncEdgeDockControls() {
   for (const input of els.edgeDockSideInputs || []) input.checked = input.value === side;
   const mode = state.settings?.edgeDockMode === 'always' ? 'always' : 'autoHide';
   for (const input of els.edgeDockModeInputs || []) input.checked = input.value === mode;
+  els.edgeDockHapticRow?.classList.toggle('hidden', state.appInfo?.platform !== 'darwin');
+  if (els.edgeDockHapticInput) els.edgeDockHapticInput.checked = state.settings?.edgeDockHaptic !== false;
   if (els.edgeDockWarnColorsInput) els.edgeDockWarnColorsInput.checked = state.settings?.edgeDockWarnColors === true;
   if (enabled) edgeDockComposer?.render();
 }
@@ -11737,6 +11750,9 @@ for (const input of els.edgeDockSideInputs || []) {
 }
 els.edgeDockWarnColorsInput?.addEventListener('change', () => {
   void saveSettings({ edgeDockWarnColors: els.edgeDockWarnColorsInput.checked });
+});
+els.edgeDockHapticInput?.addEventListener('change', () => {
+  void saveSettings({ edgeDockHaptic: els.edgeDockHapticInput.checked });
 });
 for (const input of els.edgeDockModeInputs || []) {
   input.addEventListener('change', () => {
@@ -12044,11 +12060,13 @@ function renderStatsUpdate() {
   renderDeepseekStatus();
   renderMinimaxStatus();
   renderExternalProviderStatus('claude');
+  renderExternalProviderStatus('cline');
   renderExternalProviderStatus('factory');
   renderExternalProviderStatus('zai');
   renderExternalProviderStatus('zaiteam');
   renderExternalProviderStatus('volcengine');
   renderExternalProviderStatus('qoder');
+  renderExternalProviderStatus('devin');
   renderExternalProviderStatus('trae');
   renderExternalProviderStatus('zed');
   renderExternalProviderStatus('commandcode');
@@ -13999,6 +14017,11 @@ const externalLimitAccountConfig = {
     sourceKey: 'claudeWebCookieSource',
     pendingKey: 'claudePendingCheckSince'
   },
+  cline: {
+    configuredKey: 'clineCredentialConfigured',
+    sourceKey: 'clineCredentialSource',
+    pendingKey: 'clinePendingCheckSince'
+  },
   factory: {
     configuredKey: 'factoryCredentialConfigured',
     sourceKey: 'factoryCredentialSource',
@@ -14033,6 +14056,11 @@ const externalLimitAccountConfig = {
     configuredKey: 'qoderCookieConfigured',
     sourceKey: 'qoderCookieSource',
     pendingKey: 'qoderPendingCheckSince'
+  },
+  devin: {
+    configuredKey: 'devinBearerTokenConfigured',
+    sourceKey: 'devinBearerTokenSource',
+    pendingKey: 'devinPendingCheckSince'
   },
   volcengine: {
     configuredKey: 'volcengineCredentialsConfigured',
@@ -14147,10 +14175,21 @@ function apiKeyAccountStatusText(providerName, provider, configured, source, ena
       ? 'settings.zai.statusLinked'
       : providerName === 'factory' && source === 'droid-env'
         ? 'settings.factory.statusDroidEnv'
-        : null;
+        : providerName === 'cline' && source === 'cline-signin'
+          ? 'settings.cline.statusSignin'
+          : null;
     return t(linkedKey || (source === 'env' ? `settings.${providerName}.statusEnv` : `settings.${providerName}.statusSet`));
   }
-  if (accountStatus === 'invalid') return t(`settings.${providerName}.statusInvalid`);
+  if (accountStatus === 'invalid') {
+    // Cline's two lanes refuse in different places, and this row names the lane the
+    // credential came from rather than always the key field: Cline owns recovery for
+    // the discovered sign-in, while Token Monitor owns the configured API key. Every
+    // other provider here keeps the one statusInvalid string.
+    const invalidKey = providerName === 'cline' && source === 'cline-signin'
+      ? 'settings.cline.statusSigninInvalid'
+      : `settings.${providerName}.statusInvalid`;
+    return t(invalidKey);
+  }
   if (accountStatus === 'notConfigured') return t(`settings.${providerName}.statusNotSet`);
   const statusKeys = {
     checking: 'settings.common.checking',
@@ -14194,6 +14233,10 @@ function zaiPlatformUrl() {
     : 'https://z.ai/manage-apikey/coding-plan/personal/my-plan';
 }
 
+function clinePlatformUrl() {
+  return 'https://app.cline.bot/dashboard/account';
+}
+
 function factoryPlatformUrl() {
   return 'https://app.factory.ai/settings/api-keys';
 }
@@ -14221,6 +14264,10 @@ function qoderUsagePagePath() {
 
 function qoderPlatformUrl() {
   return `https://${qoderUsagePagePath()}`;
+}
+
+function devinPlatformUrl() {
+  return 'https://app.devin.ai/settings/usage';
 }
 
 function updateQoderUsagePageHint() {
@@ -14307,6 +14354,14 @@ function ollamaValidationError(provider) {
   return t('settings.ollama.validationUnavailable');
 }
 
+function clineApiKeyValidationError(provider) {
+  if (provider?.status === 'unauthorized') return t('settings.cline.validationInvalid');
+  if (provider?.status === 'rateLimited' || provider?.status === 'sourceRateLimited') {
+    return t('settings.cline.validationRateLimited');
+  }
+  return t('settings.cline.validationUnavailable');
+}
+
 function factoryApiKeyValidationError(provider) {
   if (provider?.status === 'unauthorized') return t('settings.factory.validationInvalid');
   if (provider?.status === 'rateLimited' || provider?.status === 'sourceRateLimited') {
@@ -14348,6 +14403,12 @@ function renderExternalProviderStatus(providerName) {
     if (siteInput) siteInput.value = state.settings?.qoderSite === 'cn' ? 'cn' : 'global';
     updateQoderUsagePageHint();
   }
+  if (providerName === 'devin') {
+    const organizationInput = document.getElementById('devinOrganizationInput');
+    if (organizationInput && !organizationInput.value) {
+      organizationInput.value = state.settings?.devinOrganization || '';
+    }
+  }
   if (providerName === 'alibaba') {
     const variantInput = document.getElementById('alibabaVariantInput');
     if (variantInput) variantInput.value = alibabaSavedVariant();
@@ -14365,9 +14426,12 @@ function renderExternalProviderStatus(providerName) {
   }
   manualPanel.classList.toggle('hidden', linked);
   openBtn.classList.toggle('hidden', linked);
-  if (providerName === 'zai' && source === 'zcode-auto') {
+  const discoveredLogin = (providerName === 'zai' && source === 'zcode-auto')
+    || (providerName === 'cline' && source === 'cline-signin');
+  if (discoveredLogin) {
     // The discovered login is not user-entered, so the override input and the
-    // console link stay reachable instead of hiding behind linked.
+    // console link stay reachable instead of hiding behind linked. Cline's stored
+    // sign-in is the same situation as Zai's ZCode login.
     manualPanel.classList.remove('hidden');
     openBtn.classList.remove('hidden');
   }
@@ -16300,6 +16364,67 @@ function setupCursorAccountUI() {
     });
   }
 
+  const clineToggle = document.getElementById('clineSettingsToggle');
+  if (clineToggle) {
+    clineToggle.addEventListener('click', () => setExternalAccountExpanded('cline', !state.clineAccountExpanded));
+    setExternalAccountExpanded('cline', false);
+    renderExternalProviderStatus('cline');
+
+    document.getElementById('clineOpenBrowser').addEventListener('click', () => {
+      window.tokenMonitor.openExternal(clinePlatformUrl());
+    });
+
+    document.getElementById('clineLogoutButton').addEventListener('click', async () => {
+      await saveSettings({ clineApiKey: '' });
+      clearExternalProviderCheckPending('cline');
+      clearExternalProviderPendingStatus('cline');
+      renderExternalProviderStatus('cline');
+      await refreshStats({ force: true });
+    });
+
+    document.getElementById('clineRefreshButton').addEventListener('click', async () => {
+      await refreshStats({ force: true });
+    });
+
+    document.getElementById('clineApiKeySubmit').addEventListener('click', async () => {
+      const input = document.getElementById('clineApiKeyInput');
+      const errorEl = document.getElementById('clineErrorMessage');
+      const submit = document.getElementById('clineApiKeySubmit');
+      errorEl.classList.add('hidden');
+      if (!String(input.value || '').trim()) {
+        errorEl.textContent = t('settings.cline.statusNotSet');
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      submit.disabled = true;
+      submit.textContent = t('settings.common.checking');
+      try {
+        markExternalProviderCheckPending('cline');
+        const validation = await window.tokenMonitor.cline.validateApiKey(input.value);
+        if (!validation?.ok) {
+          clearExternalProviderCheckPending('cline');
+          renderExternalProviderStatus('cline');
+          errorEl.textContent = clineApiKeyValidationError(validation);
+          errorEl.classList.remove('hidden');
+          return;
+        }
+        await saveSettings({ clineApiKey: input.value });
+        input.value = '';
+        renderExternalProviderStatus('cline');
+        await refreshStats({ force: true });
+        setExternalAccountExpanded('cline', !externalProviderAccountLinked('cline'));
+        renderExternalProviderStatus('cline');
+      } catch (err) {
+        clearExternalProviderCheckPending('cline');
+        errorEl.textContent = t('settings.cline.saveFailed', { message: err.message });
+        errorEl.classList.remove('hidden');
+      } finally {
+        submit.disabled = false;
+        submit.textContent = t('settings.cline.saveApiKey');
+      }
+    });
+  }
+
   const factoryToggle = document.getElementById('factorySettingsToggle');
   if (factoryToggle) {
     factoryToggle.addEventListener('click', () => setExternalAccountExpanded('factory', !state.factoryAccountExpanded));
@@ -16685,6 +16810,60 @@ function setupCursorAccountUI() {
       } catch (err) {
         clearExternalProviderCheckPending('qoder');
         errorEl.textContent = t('settings.qoder.saveFailed', { message: err.message });
+        errorEl.classList.remove('hidden');
+      }
+    });
+  }
+
+  const devinToggle = document.getElementById('devinSettingsToggle');
+  if (devinToggle) {
+    devinToggle.addEventListener('click', () => setExternalAccountExpanded('devin', !state.devinAccountExpanded));
+    setExternalAccountExpanded('devin', false);
+    renderExternalProviderStatus('devin');
+
+    document.getElementById('devinOpenBrowser').addEventListener('click', () => {
+      window.tokenMonitor.openExternal(devinPlatformUrl());
+    });
+
+    document.getElementById('devinLogoutButton').addEventListener('click', async () => {
+      await saveSettings({ devinBearerToken: '', devinOrganization: '' });
+      clearExternalProviderCheckPending('devin');
+      clearExternalProviderPendingStatus('devin');
+      renderExternalProviderStatus('devin');
+      await refreshStats({ force: true });
+    });
+
+    document.getElementById('devinRefreshButton').addEventListener('click', async () => {
+      await refreshStats({ force: true });
+    });
+
+    document.getElementById('devinCredentialSubmit').addEventListener('click', async () => {
+      const tokenInput = document.getElementById('devinBearerTokenInput');
+      const organizationInput = document.getElementById('devinOrganizationInput');
+      const errorEl = document.getElementById('devinErrorMessage');
+      errorEl.classList.add('hidden');
+      if (!String(tokenInput.value || '').trim() || !String(organizationInput.value || '').trim()) {
+        errorEl.textContent = t('settings.devin.credentialsRequired');
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      try {
+        markExternalProviderCheckPending('devin');
+        await saveSettings({
+          devinBearerToken: tokenInput.value,
+          devinOrganization: organizationInput.value,
+          limitProviders: limitProviderSelectionIncluding('devin'),
+          limitsEnabled: true
+        });
+        tokenInput.value = '';
+        organizationInput.value = '';
+        renderExternalProviderStatus('devin');
+        await refreshStats({ force: true });
+        setExternalAccountExpanded('devin', !externalProviderAccountLinked('devin'));
+        renderExternalProviderStatus('devin');
+      } catch (err) {
+        clearExternalProviderCheckPending('devin');
+        errorEl.textContent = t('settings.devin.saveFailed', { message: err.message });
         errorEl.classList.remove('hidden');
       }
     });
@@ -17331,6 +17510,7 @@ function initSettingsAnimationWrappers() {
     '#claudeManualPanel',
     '#opencodeManualPanel',
     '#cursorManualPanel',
+    '#clineManualPanel',
     '#factoryManualPanel',
     '#kimiManualPanel',
     '#zedManualPanel',
@@ -17338,6 +17518,7 @@ function initSettingsAnimationWrappers() {
     '#zaiManualPanel',
     '#zaiteamManualPanel',
     '#qoderManualPanel',
+    '#devinManualPanel',
     '#deepseekManualPanel',
     '#minimaxManualPanel',
     '#volcengineManualPanel',

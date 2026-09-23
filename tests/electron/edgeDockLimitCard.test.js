@@ -240,6 +240,47 @@ test('an OpenRouter card carries the balance meter and its detail tooltip', () =
   assert.match(tooltip.text, /All time/);
 });
 
+test('a Devin card keeps Daily, Weekly, and the extra usage balance', () => {
+  const card = dockView().renderProviderWindows({
+    provider: 'devin',
+    windows: [
+      { kind: 'daily', label: 'Daily', remainingPercent: 100, resetsAt: '2026-09-24T00:00:00.000Z' },
+      { kind: 'weekly', label: 'Weekly', remainingPercent: 100, resetsAt: '2026-09-28T00:00:00.000Z' },
+      { kind: 'billing', metric: 'credits', label: 'Extra usage balance', remaining: 10, currency: 'USD', showMeter: false }
+    ],
+    balance: { amount: 10, currency: 'USD' }
+  }, '#46B482');
+
+  const windows = [...card.walk()].filter((node) => node.classNames.has('limit-window'));
+  assert.deepEqual(
+    windows.map((node) => node.children[0].children[0].textContent),
+    ['Daily', 'Weekly', 'Extra usage balance']
+  );
+  assert.match(windows[2].text, /\$10\.00/);
+  assert.equal(windows[2].classNames.has('limit-window-wide'), true);
+  assert.equal(windows[2].classNames.has('limit-window-no-reset'), true);
+});
+
+test('a Cline card folds month spend into the credit detail tooltip', () => {
+  const card = dockView().renderProviderWindows({
+    provider: 'cline',
+    windows: [
+      { kind: 'billing', metric: 'credits', label: 'Credits', remaining: 0.5, currency: 'CREDITS', showMeter: false },
+      { kind: 'billing', metric: 'spend', label: 'Usage credits', used: 0.13, limit: null, currency: 'USD', showMeter: false }
+    ]
+  }, '#9D4EDD');
+
+  const rows = [...card.walk()].filter((node) => node.classNames.has('limit-window'));
+  const tooltip = card.find('limit-detail-tooltip');
+  assert.equal(rows.length, 1, 'credits and month spend should share one presentation row');
+  assert.match(card.text, /Credits/);
+  assert.match(card.text, /0\.50/);
+  assert.ok(tooltip, 'the month spend should remain available from the credit row');
+  assert.match(tooltip.text, /Month spent/);
+  assert.match(tooltip.text, /\$0\.13/);
+  assert.match(rows[0].attributes['aria-label'], /Month spent \$0\.13/);
+});
+
 test('a Codex card keeps the page ordering and the banked resets', () => {
   const card = dockView().renderProviderWindows({
     provider: 'codex',
@@ -511,6 +552,45 @@ test('a recorded subscription decorates the card plan cell with the page hover c
   }, '#10A37F');
   assert.equal(bare.find('subscription-tooltip'), null);
   assert.equal(bare.find('limit-plan').textContent, 'Plus');
+});
+
+// The usage figure is keyed by client, and a provider is not always named after
+// the client whose tokens it bills. Read as a same-named key, a Factory Droid
+// subscription found nothing at `factory` while the month's cost sat under
+// `droid`, so the card stopped at the price and never showed what those tokens
+// would have cost instead.
+test('a subscription is compared against usage recorded under a differently named client', () => {
+  const account = { provider: 'factory', accountKey: 'k1', accountName: 'demo@example.com' };
+  const row = dockView({
+    subscriptions: [{
+      id: 'sub-1',
+      provider: 'factory',
+      kind: 'subscription',
+      planName: 'Pro',
+      amountMinor: 2000,
+      currency: 'USD',
+      intervalCount: 1,
+      interval: 'month',
+      startDate: '2026-08-01',
+      autoRenew: true,
+      nextRenewalOverride: '',
+      endDate: null,
+      topUps: []
+    }],
+    accounts: [account],
+    monthClientCosts: { droid: 12, codex: 99 }
+  }).renderLimitProviderRow('factory', 'Factory Droid', {
+    ...account,
+    status: 'ok',
+    planLabel: 'Pro',
+    updatedAt: new Date().toISOString(),
+    windows: [{ kind: 'session', label: 'Session', remainingPercent: 70 }]
+  }, '#10A37F');
+
+  const card = row.find('subscription-tooltip');
+  assert.ok(card, 'the recorded plan still draws its card');
+  assert.match(card.text, /12\.00/, "Droid's tokens are Factory's usage");
+  assert.doesNotMatch(card.text, /99/, 'and another client\'s tokens stay out of it');
 });
 
 // The row is drawn from the aggregate's copy of an account, while the matcher

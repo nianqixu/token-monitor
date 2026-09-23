@@ -158,11 +158,11 @@ test('wslUsageHomes returns [] when no distro is running', () => {
 });
 
 // A WSL home that only holds a new A-class client's data (pi, Oh My Pi, zed,
-// Kilo, Command Code, DSH, micode, zcode, kiro, LM Studio) must still be discovered — mirroring the sync
-// point each new tracked client adds (see AGENTS.md "Tracked-client list must
-// stay in sync"). Zed's marker is the threads.db file, not the directory
+// Kilo, Command Code, DSH, mimo, zcode, kiro, LM Studio) must still be discovered — mirroring the sync
+// point each new tracked client adds (see docs/providers/README.md "Adding a tracked
+// client"). Zed's marker is the threads.db file, not the directory
 // (tokscale checks is_file()).
-test('wslUsageHomes keeps a home whose only tracked-client data is pi, zed, Kilo, Command Code, DSH, micode, zcode, kiro, or LM Studio', () => {
+test('wslUsageHomes keeps a home whose only tracked-client data is pi, zed, Kilo, Command Code, DSH, mimo, zcode, kiro, or LM Studio', () => {
   function homesFor(markerRel) {
     return wslUsageHomes({
       platform: 'win32',
@@ -304,7 +304,7 @@ test('collectWslUsage applies the injected row cost resolver to every period', a
     entries: [{ client: 'micode', sessionId: 's1', model: 'mimo-v2.5-pro', input: 10, cost: 99 }]
   });
   const { bundle } = await collectWslUsage({
-    clients: 'micode',
+    clients: 'mimo',
     allTimeSince: '2025-01-01',
     commandTimeoutMs: 1000,
     runTokscale,
@@ -314,7 +314,7 @@ test('collectWslUsage applies the injected row cost resolver to every period', a
   for (const period of [bundle.today, bundle.month, bundle.allTime]) {
     assert.equal(period.costUsd, 0.125);
     assert.equal(period.modelCosts['mimo-v2.5-pro'], 0.125);
-    assert.equal(period.sessions['micode:s1'].costUsd, 0.125);
+    assert.equal(period.sessions['mimo:s1'].costUsd, 0.125);
   }
 });
 

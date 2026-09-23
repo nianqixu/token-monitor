@@ -21,7 +21,7 @@ const MIMO_ROW = {
 
 test('GUI custom pricing overrides provider-reported cost across every usage rollup', async () => {
   const summary = await collectUsageOnce({
-    clients: 'micode',
+    clients: 'mimo',
     allTimeSince: '2024-01-01',
     deviceId: 'pricing-test',
     historyEnabled: false,
@@ -42,10 +42,10 @@ test('GUI custom pricing overrides provider-reported cost across every usage rol
 
   for (const period of [summary.today, summary.month, summary.allTime]) {
     assert.ok(Math.abs(period.costUsd - expected) < 1e-12);
-    assert.ok(Math.abs(period.clientCosts.micode - expected) < 1e-12);
+    assert.ok(Math.abs(period.clientCosts.mimo - expected) < 1e-12);
     assert.ok(Math.abs(period.modelCosts['mimo-v2.5-pro'] - expected) < 1e-12);
-    assert.ok(Math.abs(period.clientModelCosts.micode['mimo-v2.5-pro'] - expected) < 1e-12);
-    assert.ok(Math.abs(period.sessions['micode:session-1'].costUsd - expected) < 1e-12);
-    assert.ok(Math.abs(period.sessions['micode:session-1'].modelCosts['mimo-v2.5-pro'] - expected) < 1e-12);
+    assert.ok(Math.abs(period.clientModelCosts.mimo['mimo-v2.5-pro'] - expected) < 1e-12);
+    assert.ok(Math.abs(period.sessions['mimo:session-1'].costUsd - expected) < 1e-12);
+    assert.ok(Math.abs(period.sessions['mimo:session-1'].modelCosts['mimo-v2.5-pro'] - expected) < 1e-12);
   }
 });

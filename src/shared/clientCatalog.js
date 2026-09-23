@@ -27,7 +27,7 @@
   // and the README table (tests/shared/clientTracking.test.js enforces that).
   //
   // `defaultTracked: false` keeps a client wired and selectable but off on a
-  // fresh install. micode (MiMo Code) is opt-in because mimocode.db auto-imports
+  // fresh install. mimo (MiMo) is opt-in because mimocode.db auto-imports
   // Claude Code sessions (its claude-import service), so scanning it
   // double-counts the `claude` client: tokscale fixed the scan path but does not
   // dedup imports, and the imported rows aren't cleanly separable (MiMo is
@@ -58,7 +58,7 @@
     { id: 'zed', label: 'Zed' },
     { id: 'kilo', label: 'Kilo' },
     { id: 'commandcode', label: 'Command Code' },
-    { id: 'micode', label: 'MiMo Code', defaultTracked: false },
+    { id: 'mimo', label: 'Xiaomi MiMo', defaultTracked: false },
     { id: 'zcode', label: 'ZCode' },
     { id: 'kiro', label: 'Kiro' },
     { id: 'codebuddy', label: 'CodeBuddy' },
@@ -70,6 +70,7 @@
     { id: 'cherrystudio', label: 'Cherry Studio' },
     { id: 'lmstudio', label: 'LM Studio' },
     { id: 'unsloth', label: 'Unsloth' },
+    { id: 'devin', label: 'Devin' },
     // Trae lanes collect through the Electron traeCollection module, not this
     // collector — they are catalog members for display preferences only and
     // stay opt-in (their own enabled settings gate collection).
