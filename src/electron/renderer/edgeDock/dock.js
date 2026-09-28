@@ -16,6 +16,7 @@ const fontSettingsApi = window.TokenMonitorFontSettings;
 const motionPreferenceApi = window.TokenMonitorMotionPreference;
 const currencyApi = window.TokenMonitorCurrency;
 const compactTokenApi = window.TokenMonitorCompactTokens;
+const compactMoneyApi = window.TokenMonitorCompactMoney;
 const balanceDisplay = window.TokenMonitorLimitBalanceDisplay;
 const accountIdentityApi = window.TokenMonitorAccountIdentity;
 const glassRenderingApi = window.TokenMonitorGlassRendering;
@@ -37,6 +38,7 @@ const { CLIENT_LABELS } = window.TokenMonitorClientCatalog;
 // payload on a timer, so whether a session is still running has to be answered
 // at paint time rather than frozen at push time.
 const sessionLive = window.TokenMonitorSessionLive;
+const sessionRowsApi = window.TokenMonitorSessionRows;
 const SESSION_STATE_GLYPHS = sessionLive.sessionStateMarkup({
   spin: 'edge-dock-session-spin',
   check: 'edge-dock-session-check',
@@ -117,7 +119,7 @@ function isMacLegacy(payload) {
 
 function applyAppearance(payload) {
   const appearance = payload?.appearance || {};
-  const key = JSON.stringify([appearance, payload?.platform, payload?.glass]);
+  const key = JSON.stringify([appearance, payload?.platform, payload?.glass, payload?.liquidGlass]);
   if (key === state.appearanceKey) return;
   state.appearanceKey = key;
 
@@ -140,6 +142,7 @@ function applyAppearance(payload) {
 
   docEl.classList.toggle('system-glass-disabled', appearance.systemGlass === false);
   docEl.classList.toggle('edge-dock-no-material', payload?.glass !== true);
+  docEl.classList.toggle('edge-dock-liquid-glass', payload?.glass === true && payload?.liquidGlass === true);
   docEl.classList.toggle('is-windows', payload?.platform === 'win32');
   docEl.classList.toggle('is-mac-legacy', isMacLegacy(payload));
   docEl.classList.toggle(
@@ -207,8 +210,9 @@ function clientLabel(id) {
   return CLIENT_LABELS[id] || LIMIT_PROVIDER_LABELS[id] || id;
 }
 
-// Whether styles.css defines a mask for `.row-icon-<id>`. Probed rather than
-// listed so the dock can never drift from the icon table it borrows.
+// Whether `.row-icon-<id>` has a mask — a vendor mark installed by
+// rowIconMasks.js, or one of the few styles.css keeps (token-monitor). Probed
+// rather than listed so the dock can never drift from the rules it borrows.
 function hasMask(id) {
   if (maskSupport.has(id)) return maskSupport.get(id);
   const probe = el('span', `row-icon-${id}`);
@@ -242,6 +246,14 @@ function formatTokens(value) {
 
 function formatCardTokens(value) {
   return Math.round(Number(value || 0)).toLocaleString('en-US');
+}
+
+// Breakdown rows copy the widget's home list: a compact token reading, then the
+// share. The rail keeps its own tray style (two-decimal B, trailing zeros);
+// the card uses the widget's plainer single-decimal reading instead.
+function formatBreakdownTokens(value) {
+  const units = compactTokenApi.effectiveCompactTokenUnits(appearance().compactTokenUnits, state.locale);
+  return compactTokenApi.formatCompactTokens(value, units, state.locale);
 }
 
 function compactCardTotal(value) {
@@ -354,8 +366,14 @@ const limitWindowsView = limitWindowsViewApi.createLimitWindowsView({
     }
   },
   formatCompact: formatTokens,
+  compactTokenThreshold: () => compactTokenApi.compactTokenUnitThreshold(
+    compactTokenApi.effectiveCompactTokenUnits(appearance().compactTokenUnits, state.locale),
+    state.locale
+  ),
   formatMoney: balanceDisplay.formatMoney,
-  formatCompactMoney: balanceDisplay.formatCompactMoney,
+  formatCompactMoney: (value, currency) => balanceDisplay.formatCompactMoney(
+    value, currency, appearance().compactTokenUnits, state.locale
+  ),
   formatPercent: (value) => (Number.isFinite(Number(value)) ? `${Math.round(Number(value))}%` : '--'),
   formatDuration: presentation.formatResetDuration,
   formatLimitBoundary: limitPresentationApi.limitBoundaryText,
@@ -505,11 +523,17 @@ function providerCellNode(cell) {
   const color = providerColor(cell.provider);
   const value = el('span', 'edge-dock-value');
   if (cell.credits && cell.credits.amount !== null && cell.credits.amount !== undefined) {
-    value.textContent = balanceDisplay.formatCompactMoney(cell.credits.amount, cell.credits.currency);
+    value.textContent = balanceDisplay.formatCompactMoney(
+      cell.credits.amount, cell.credits.currency, appearance().compactTokenUnits, state.locale
+    );
   } else {
     value.textContent = percentText(cell.remainingPercent);
   }
-  value.dataset.severity = displaySeverity(cell.remainingPercent);
+  // Colour answers "how close is the closest quota to empty"; the figure itself
+  // answers "what does the primary window say" (0% when a quota is spent).
+  // Splitting the two lets a tight secondary window warn without turning the
+  // headline into whichever window is lowest this minute.
+  value.dataset.severity = displaySeverity(cell.severityPercent ?? cell.remainingPercent);
   node.append(ringNode(cell.remainingPercent, color, markNode(cell.provider)), value);
   // The halo is decorative and carries no text, so the state it announces is
   // spoken here instead, from the same reading it is drawn from.
@@ -534,15 +558,19 @@ function statLabel(metric) {
 
 // Rail-width money: whole units past 100 and compact notation past 10k, so a
 // figure like HK$569.82 does not overflow a 56px readout. The card keeps the
-// full-precision figure.
+// full-precision figure. The compact form goes through the same shared helper
+// as the tray and dashboard, so it follows the token unit system — a localized
+// user sees 萬/億 here too, never 億 beside K.
 function formatRailCost(value) {
   const code = appearance().currency || 'USD';
-  const full = currencyApi.formatCurrencyFromUsd(value, code);
-  const symbol = full.replace(/[\d.,\s-]+$/, '');
   const amount = Math.abs(currencyApi.convertUsd(value, code));
   if (amount >= 10_000) {
-    return `${symbol}${new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(amount)}`;
+    return compactMoneyApi.formatCompactCurrencyFromUsd(
+      Math.abs(value), code, appearance().compactTokenUnits, state.locale
+    );
   }
+  const full = currencyApi.formatCurrencyFromUsd(value, code);
+  const symbol = full.replace(/[\d.,\s-]+$/, '');
   const digits = amount >= 100 ? 0 : amount >= 10 ? 1 : 2;
   return `${symbol}${amount.toFixed(digits)}`;
 }
@@ -767,7 +795,7 @@ function usageTile(label, usage) {
   const tile = el('div', 'edge-dock-usage-tile');
   tile.append(
     el('span', 'edge-dock-usage-label', label),
-    el('span', 'edge-dock-usage-tokens', usage ? formatCardTokens(usage.tokens) : '—')
+    el('span', 'edge-dock-usage-tokens', usage ? formatBreakdownTokens(usage.tokens) : '—')
   );
   if (usage) tile.append(el('span', 'edge-dock-usage-cost', formatCost(usage.costUsd)));
   return tile;
@@ -927,12 +955,16 @@ function sessionsContainer(sessions, options = {}) {
     // The meta line carries model, age, and (when the transcript stated one)
     // the context reading, so nothing the row showed before is displaced.
     const meta = el('span', 'edge-dock-session-meta');
-    meta.append(document.createTextNode([session.model, relativeAgo(session.lastUsedAt)].filter(Boolean).join(' · ')));
+    // The model label is composed by the Sessions list's own helper, so a
+    // multi-model session reads "N models" here exactly as it does there —
+    // projecting only the top model showed a different name than the list's
+    // for the same session.
+    meta.append(document.createTextNode([sessionRowsApi.sessionModelLabel(session), relativeAgo(session.lastUsedAt || session.startedAt)].filter(Boolean).join(' · ')));
     const context = contextNode(session);
     if (context) meta.append(context);
     row.append(
       nameNode,
-      el('span', 'edge-dock-session-tokens', formatCardTokens(session.totalTokens)),
+      el('span', 'edge-dock-session-tokens', formatBreakdownTokens(session.totalTokens)),
       meta
     );
     list.append(row);
@@ -1110,7 +1142,7 @@ function statCard(cell) {
     row.append(
       markNode(entry.id, entry.color),
       el('span', 'edge-dock-client-name', entry.name),
-      el('span', 'edge-dock-client-tokens', formatCardTokens(entry.tokens)),
+      el('span', 'edge-dock-client-tokens', formatBreakdownTokens(entry.tokens)),
       el('span', 'edge-dock-client-share', `${Math.round((entry.tokens / sum) * 100)}%`),
       meter
     );

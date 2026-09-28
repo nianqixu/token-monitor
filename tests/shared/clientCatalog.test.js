@@ -52,8 +52,9 @@ test('derived KNOWN_CLIENTS keeps the established id order', () => {
   assert.equal(
     KNOWN_CLIENTS,
     // trae/traework sit at the tail: lane-collected (not this collector) and
-    // opt-in, so DEFAULT_CLIENTS below ends at devin.
-    'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,amp,droid,kimi,qwen,grok,copilot,pi,zed,kilo,commandcode,mimo,zcode,kiro,codebuddy,workbuddy,proma,qodercn,reasonix,dsh,cherrystudio,lmstudio,unsloth,devin,trae,traework'
+    // opt-in, so DEFAULT_CLIENTS below ends at devin. omp stays opt-in too,
+    // following the fork's stance for upstream additions.
+    'claude,codex,opencode,hermes,openclaw,cursor,antigravity,cline,amp,droid,kimi,qwen,grok,copilot,pi,omp,zed,kilo,commandcode,mimo,zcode,kiro,codebuddy,workbuddy,proma,qodercn,reasonix,dsh,cherrystudio,lmstudio,unsloth,devin,trae,traework'
   );
 });
 

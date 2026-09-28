@@ -1,6 +1,6 @@
 'use strict';
 
-const { collectorAnchorTrust, collectorSnapshotTrust, computePeriodWindows, qoderCnDbPathForClients } = require('./collector');
+const { collectorAnchorTrust, collectorSnapshotTrust, computePeriodWindows, qoderCnSourcesForClients } = require('./collector');
 const { mergePeriods } = require('./usage');
 const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessionGuard');
 
@@ -56,13 +56,17 @@ function anchorTrustOptions(options) {
     allTimeSince = '',
     projectsEnabled = true,
     qoderCnDbPath: qoderCnDbPathOption,
+    qoderCnProjectsDir: qoderCnProjectsDirOption,
+    customScanPaths = null,
     homeDir,
+    env,
+    sourcePlatform,
     now = new Date()
   } = options;
-  const qoderCnDbPath = qoderCnDbPathOption === undefined
-    ? qoderCnDbPathForClients(clients, { homeDir })
-    : qoderCnDbPathOption;
-  return { clients, allTimeSince, projectsEnabled, qoderCnDbPath, now };
+  const qoderCnSources = qoderCnSourcesForClients(clients, { homeDir, env, platform: sourcePlatform });
+  const qoderCnDbPath = qoderCnDbPathOption === undefined ? qoderCnSources.dbPath : qoderCnDbPathOption;
+  const qoderCnProjectsDir = qoderCnProjectsDirOption === undefined ? qoderCnSources.projectsDir : qoderCnProjectsDirOption;
+  return { clients, allTimeSince, projectsEnabled, qoderCnDbPath, qoderCnProjectsDir, customScanPaths, now };
 }
 
 function anchorDeviceRecord(saved, options, trust) {

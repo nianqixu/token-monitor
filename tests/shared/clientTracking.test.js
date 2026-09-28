@@ -80,9 +80,10 @@ test('tracked client defaults and README share one display order', () => {
   // trae/traework join mimo/qodercn as opt-in: the lanes collect through the
   // Electron traeCollection module, while mimo/qodercn stay opt-in for the
   // double-count and local-adapter reasons documented in clientCatalog.js.
+  // omp joins them per the fork's opt-in stance for upstream additions.
   assert.deepEqual(
     DEFAULT_CLIENTS.split(','),
-    known.filter((client) => !['mimo', 'qodercn', 'trae', 'traework'].includes(client))
+    known.filter((client) => !['mimo', 'qodercn', 'omp', 'trae', 'traework'].includes(client))
   );
 });
 

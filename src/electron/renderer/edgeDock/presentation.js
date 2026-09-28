@@ -8,8 +8,8 @@
   const node = typeof module === 'object' && module.exports;
   const api = factory(
     node ? require('../../../shared/trayText') : root?.TokenMonitorTrayText,
-    node ? require('../../../shared/limitBalanceDisplay') : root?.TokenMonitorLimitBalanceDisplay,
-    node ? require('../../../shared/limitProviders') : root?.TokenMonitorLimitProviders,
+    node ? require('../../../shared/limits/balanceDisplay') : root?.TokenMonitorLimitBalanceDisplay,
+    node ? require('../../../shared/limits/providers') : root?.TokenMonitorLimitProviders,
     node ? require('./items') : root?.TokenMonitorEdgeDockItems,
     node ? require('../accountIdentity') : root?.TokenMonitorAccountIdentity,
     node ? require('../../../shared/sessionLive') : root?.TokenMonitorSessionLive,
@@ -64,8 +64,21 @@
     return ordered;
   }
 
+  // The rail headline reads the primary window like before — the pool that
+  // resets soonest is the number a glance wants — except that an exhausted
+  // quota gates the account outright: a session bar at 100% beside a weekly or
+  // monthly pool at 0% still means unusable, so the cell prints 0% then.
+  function headlinePick(selection) {
+    if (!selection) return null;
+    if (selection.exhaustedWindow) return { window: selection.exhaustedWindow, remaining: 0 };
+    return selection.primaryWindow
+      ? { window: selection.primaryWindow, remaining: selection.primaryPercent }
+      : null;
+  }
+
   function accountSummary(provider) {
     const selection = trayText.compactLimitSelection(provider);
+    const headline = headlinePick(selection);
     return {
       status: provider?.status === 'ok' && !provider?.stale ? 'ok' : (provider?.stale ? 'stale' : 'error'),
       planLabel: String(provider?.planLabel || provider?.accountLabel || ''),
@@ -74,8 +87,12 @@
       accountEmail: String(provider?.accountEmail || ''),
       updatedAt: provider?.updatedAt || provider?.checkedAt || null,
       stale: provider?.stale === true,
-      primaryRemaining: selection ? selection.primaryPercent : null,
-      primaryWindow: selection ? selection.primaryWindow : null,
+      headlineRemaining: headline ? headline.remaining : null,
+      headlineWindow: headline ? headline.window : null,
+      // Severity is the tightest metered pool, not the headline: with the
+      // warn-colours toggle on, an account whose weekly runs out while its
+      // session still reads 100% flags before the number flips to 0%.
+      severityPercent: selection ? selection.tightestPercent : null,
       // The card renders its quota rows from the shared Limits view, which
       // reads the collector record itself. Projecting the windows here is what
       // made the card a second, less-informed implementation of the same rows:
@@ -156,7 +173,6 @@
   // it the card could not say which tool a row belongs to.
   function sessionRowsFor(entries, stateByKey) {
     return entries.map(({ key, session }) => {
-      const models = Object.entries(session.models || {}).sort((a, b) => (finite(b[1]) || 0) - (finite(a[1]) || 0));
       return {
         title: String(session.title || ''),
         projectLabel: String(session.projectLabel || ''),
@@ -166,10 +182,15 @@
         key,
         sessionId: String(session.sessionId || ''),
         client: normalizedId(session.client),
-        model: models[0]?.[0] || '',
+        // The whole model map, not just the top one: the card composes its
+        // label with the Sessions list's own sessionModelLabel(), which reads
+        // "N models" for a multi-model session — a reading this projection
+        // could not reproduce from a flattened winner.
+        models: session.models || {},
         totalTokens: finite(session.totalTokens) || 0,
         costUsd: finite(session.costUsd) || 0,
-        lastUsedAt: session.lastUsedAt || session.startedAt || null,
+        lastUsedAt: session.lastUsedAt || null,
+        startedAt: session.startedAt || null,
         // Carried onto the projected row, not just used here: the dock renderer
         // re-derives the state at paint time and needs the boundary to do it.
         turnEnded: session.turnEnded === true,
@@ -221,6 +242,17 @@
       ordered = entries.filter((entry) => chosen.has(entry.key));
     }
     return { rows: sessionRowsFor(ordered, stateByKey), running, stateByKey };
+  }
+
+  function recentSessionRows(stats, cap = SESSIONS_RECENT_COUNT, options = {}) {
+    const entries = sessionSourceRows(stats);
+    if (options.includeRunningBeyondCap === true) {
+      const states = new Map(entries.map(({ key, session }) => [key, sessionLive.sessionActivityState(session)]));
+      const selected = entries.filter((entry, index) => index < cap || states.get(entry.key) === 'running');
+      return sessionRowsFor(selected, states);
+    }
+    const runningOnly = options.runningOnly === true;
+    return cappedSessionRows(entries, runningOnly ? entries.length : cap, runningOnly, 'timeline').rows;
   }
 
   // The running reading, derived from the projected rows at the clock the caller
@@ -342,14 +374,14 @@
     // tightest visible account rather than leaving the rail blank.
     let tightest = null;
     for (const account of projected) {
-      if (account.summary.primaryRemaining === null) continue;
-      if (!tightest || account.summary.primaryRemaining < tightest.summary.primaryRemaining) tightest = account;
+      if (account.summary.headlineRemaining === null) continue;
+      if (!tightest || account.summary.headlineRemaining < tightest.summary.headlineRemaining) tightest = account;
     }
     const activeHeadline = id === 'codex' && options.accountMode !== 'lowest'
-      ? projected.find((account) => account.summary.active && account.summary.primaryRemaining !== null) || null
+      ? projected.find((account) => account.summary.active && account.summary.headlineRemaining !== null) || null
       : null;
     const headline = activeHeadline || tightest;
-    const headlineWindow = headline?.summary.primaryWindow || null;
+    const headlineWindow = headline?.summary.headlineWindow || null;
     const headlineCredits = headlineWindow && balanceDisplay.isCreditsWindow(headlineWindow)
       ? {
         amount: balanceDisplay.creditsAmount(headline.record, headlineWindow),
@@ -368,7 +400,8 @@
       kind: 'provider',
       provider: id,
       status: headline ? 'ok' : (accounts.some((account) => account.summary.status === 'stale') ? 'stale' : 'error'),
-      remainingPercent: headline ? headline.summary.primaryRemaining : null,
+      remainingPercent: headline ? headline.summary.headlineRemaining : null,
+      severityPercent: headline ? headline.summary.severityPercent : null,
       windowKind: headlineWindow ? String(headlineWindow.kind || '') : '',
       credits: headlineCredits,
       accountCount: accounts.length,
@@ -456,21 +489,12 @@
     if (metric === dockItems.SESSIONS_METRIC) {
       // Every tracked client, not just the ones with a limits provider: this is
       // the item that answers for the clients no quota card can show.
-      const rows = sessionSourceRows(stats);
+      const sessions = recentSessionRows(stats, SESSIONS_RECENT_COUNT, { runningOnly: options.runningOnly === true });
       // Only a cell that draws the rate carries one: attaching the sample to every
       // sessions item would put live figures in a projection nothing reads them
       // from, and would make "this cell shows marks" indistinguishable in the cell.
       const wantsRate = options.cellDetail === 'rate';
       const sample = wantsRate ? options.liveRate || null : null;
-      const stateByKey = new Map(rows.map(({ key, session }) => [key, sessionLive.sessionActivityState(session)]));
-      const runningEntries = rows.filter(({ key }) => stateByKey.get(key) === 'running');
-      const { rows: sessions } = cappedSessionRows(
-        rows,
-        options.runningOnly === true ? runningEntries.length : SESSIONS_RECENT_COUNT,
-        options.runningOnly === true,
-        // A timeline prints newest-first; the provider card keeps running-first.
-        'timeline'
-      );
       // No frozen count: the cell carries its rows and the renderer asks them at
       // paint time, so a rail left on screen stops claiming a running session the
       // moment that session crosses the window. `expiresAt` lets the main process
@@ -631,6 +655,7 @@
     SESSIONS_METRIC: dockItems.SESSIONS_METRIC,
     buildEdgeDockCells,
     nextRunningExpiryAt,
+    recentSessionRows,
     runningSessionSummary,
     connectedLimitProviders,
     displayPercent,

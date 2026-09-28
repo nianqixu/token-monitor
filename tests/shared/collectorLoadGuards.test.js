@@ -557,7 +557,7 @@ test('Antigravity source events target its umbrella client without watching sync
     await waitForCondition(() => updates.length === 2);
     assert.equal(syncCalls, 1, 'a source event inside the floor reuses the fresh cache');
     const targeted = calls[calls.length - 1];
-    assert.equal(targeted[targeted.indexOf('--client') + 1], 'antigravity,antigravity-cli');
+    assert.equal(targeted[targeted.indexOf('--client') + 1], 'antigravity,antigravity-cli,antigravity-extension');
     assert.ok(targeted.includes('--today'));
 
     // The floor defers that sync, it does not drop it. No second event follows —
@@ -567,7 +567,7 @@ test('Antigravity source events target its umbrella client without watching sync
     await waitForCondition(() => syncCalls === 2);
     await waitForCondition(() => updates.length === 3);
     const caughtUp = calls[calls.length - 1];
-    assert.equal(caughtUp[caughtUp.indexOf('--client') + 1], 'antigravity,antigravity-cli');
+    assert.equal(caughtUp[caughtUp.indexOf('--client') + 1], 'antigravity,antigravity-cli,antigravity-extension');
     assert.ok(caughtUp.includes('--today'), 'the catch-up rescans behind the sync it waited for');
   } finally {
     Date.now = originalNow;
@@ -690,7 +690,7 @@ test('a catch-up that comes due mid-tick keeps its targeted scan scope', async (
     await waitForCondition(() => syncCalls === 2, 4000);
     const caughtUp = calls[calls.length - 1];
     const scanned = caughtUp[caughtUp.indexOf('--client') + 1];
-    assert.equal(scanned, 'antigravity,antigravity-cli', 'the catch-up stays targeted');
+    assert.equal(scanned, 'antigravity,antigravity-cli,antigravity-extension', 'the catch-up stays targeted');
     assert.equal(scanned.includes('claude'), false, 'and never widens to every tracked client');
   } finally {
     Date.now = originalNow;
@@ -883,7 +883,7 @@ test('a failed forced sync hands the source event back instead of eating it', as
     t.mock.timers.reset();
     await waitForCondition(() => syncCalls === 3, 4000);
     const retried = calls[calls.length - 1];
-    assert.equal(retried[retried.indexOf('--client') + 1], 'antigravity,antigravity-cli');
+    assert.equal(retried[retried.indexOf('--client') + 1], 'antigravity,antigravity-cli,antigravity-extension');
   } finally {
     Date.now = originalNow;
     if (handle) handle.stop();
@@ -1352,7 +1352,7 @@ test('an Antigravity CLI event rescans without paying for an IDE sync', async ()
     await waitForCondition(() => updates.length === 2);
     assert.equal(syncCalls, 1, 'a CLI-only event leaves the sync on its idle cadence');
     const targeted = calls[calls.length - 1];
-    assert.equal(targeted[targeted.indexOf('--client') + 1], 'antigravity,antigravity-cli');
+    assert.equal(targeted[targeted.indexOf('--client') + 1], 'antigravity,antigravity-cli,antigravity-extension');
     assert.ok(targeted.includes('--today'));
   } finally {
     if (handle) handle.stop();
@@ -2253,7 +2253,7 @@ test('watchPathsForClients keeps bounded tool roots but leaves Kiro IDE globalSt
   os.homedir = () => tmp;
   try {
     const { clientDataDirPresence, watchPathsForClients } = freshCollector();
-    const dirs = watchPathsForClients('pi,zed,kilo,mimo,zcode,kiro,codebuddy,workbuddy');
+    const dirs = watchPathsForClients('pi,omp,zed,kilo,mimo,zcode,kiro,codebuddy,workbuddy');
     assert.ok(dirs.includes(path.join(tmp, '.pi', 'agent', 'sessions')));
     assert.ok(dirs.includes(path.join(tmp, '.omp', 'agent', 'sessions')));
     assert.ok(dirs.includes(path.join(tmp, '.local', 'share', 'zed', 'threads')));
@@ -2278,8 +2278,8 @@ test('watchPathsForClients keeps bounded tool roots but leaves Kiro IDE globalSt
     assert.ok(dirs.includes(path.join(tmp, '.codebuddy', 'projects')));
     assert.ok(dirs.includes(path.join(tmp, '.workbuddy', 'projects')));
     assert.ok(dirs.includes(path.join(tmp, '.workbuddy-ai', 'projects')));
-    assert.deepEqual(clientDataDirPresence('pi,zed,kilo,mimo,zcode,kiro,codebuddy,workbuddy'), {
-      pi: true, zed: true, kilo: true, mimo: true, zcode: true, kiro: true, codebuddy: true, workbuddy: true
+    assert.deepEqual(clientDataDirPresence('pi,omp,zed,kilo,mimo,zcode,kiro,codebuddy,workbuddy'), {
+      pi: true, omp: true, zed: true, kilo: true, mimo: true, zcode: true, kiro: true, codebuddy: true, workbuddy: true
     });
   } finally {
     os.homedir = originalHomedir;
@@ -2501,7 +2501,7 @@ test('antigravity sync runs at most once per throttle window across ticks', asyn
   }
 });
 
-test('collectUsageOnce scans tokscale for antigravity-cli when antigravity is tracked', async () => {
+test('collectUsageOnce scans tokscale for both Antigravity parse-local clients when tracked', async () => {
   // tokscale 4.x exposes Antigravity CLI (`agy`) under its own parse-local client
   // id `antigravity-cli`; our tracked-client list only knows the umbrella
   // `antigravity` id, so the scan filter must be widened or the CLI rows are
@@ -2530,6 +2530,7 @@ test('collectUsageOnce scans tokscale for antigravity-cli when antigravity is tr
       const ids = filter.split(',');
       assert.ok(ids.includes('antigravity'), `antigravity missing from --client ${filter}`);
       assert.ok(ids.includes('antigravity-cli'), `antigravity-cli missing from --client ${filter}`);
+      assert.ok(ids.includes('antigravity-extension'), `antigravity-extension missing from --client ${filter}`);
     }
   } finally {
     childProcess.spawn = originalSpawn;
@@ -3156,11 +3157,18 @@ test('self-watch db-shm events are ignored for every client whose scan recreates
   const { isSelfWatchSqliteSidecarEvent } = freshCollector();
   const qoderRoot = path.join(os.tmpdir(), 'QoderCN', 'db');
   const zcodeRoot = path.join(os.tmpdir(), 'zcode', 'cli', 'db');
-  const roots = { qodercn: [qoderRoot], zcode: [zcodeRoot] };
+  const antigravityRoot = path.join(os.tmpdir(), '.gemini', 'antigravity');
+  const antigravityConversation = path.join(antigravityRoot, 'conversations');
+  const roots = { antigravity: [antigravityRoot], qodercn: [qoderRoot], zcode: [zcodeRoot] };
 
   // Each client keeps its own database basename: Qoder CN names it local.db,
-  // ZCode names it db.sqlite.
-  for (const [root, base] of [[qoderRoot, 'local.db'], [zcodeRoot, 'db.sqlite']]) {
+  // ZCode names it db.sqlite, Antigravity names one per conversation, below its
+  // watch root.
+  for (const [root, base] of [
+    [qoderRoot, 'local.db'],
+    [zcodeRoot, 'db.sqlite'],
+    [antigravityConversation, '1f17ba78-fe78-4ed6-9f69-07387625fdad.db']
+  ]) {
     assert.equal(isSelfWatchSqliteSidecarEvent(path.join(root, base + '-shm'), roots), true);
     assert.equal(isSelfWatchSqliteSidecarEvent(path.join(root, base + '-wal'), roots), false,
       'the -wal carries real data and must still trigger a scan');
@@ -3279,7 +3287,9 @@ test('collector preserves Qoder CN while publishing other clients after a bounde
   const originalPeriods = qoderCnUsage.buildQoderCnPeriods;
   let failReads = false;
   let claudeTokens = 3;
-  qoderCnUsage.collectQoderCnRows = async () => {
+  const qoderCnReadOptions = [];
+  qoderCnUsage.collectQoderCnRows = async (options) => {
+    qoderCnReadOptions.push(options);
     if (failReads) {
       const error = new Error('qodercn sqlite read budget exceeded (rows limit 100000)');
       error.code = 'QODER_CN_READ_BUDGET_EXCEEDED';
@@ -3318,6 +3328,7 @@ test('collector preserves Qoder CN while publishing other clients after a bounde
     });
 
     await waitForCondition(() => updates.length === 1);
+    assert.equal(qoderCnReadOptions[0].includeJsonl, true, 'production collection includes current JSONL transcripts');
     const anchorPath = path.join(tmp, 'collector-anchor.json');
     const firstAnchor = JSON.parse(fs.readFileSync(anchorPath, 'utf8'));
     assert.equal(firstAnchor.qoderCnPeriods.today.clients.qodercn, 7);

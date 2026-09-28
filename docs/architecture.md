@@ -16,6 +16,8 @@ Cross-runtime decisions that one subsystem can break without noticing. Each sect
 
 `src/electron/main.js` (widget), `src/agent/agent.js` (headless collector) and `src/hub/server.js` (Node Hub: `/api/ingest`, `/api/stats`, `/api/stats/stream`) share `src/shared/`. `worker/src/index.js` is a Cloudflare Worker Hub speaking the same protocol.
 
+The device runtime that the widget and the agent run (`deviceRuntime.js`, `deviceState.js`, the usage runtime, host, worker and transform, and the usage archives) lives in `src/shared/usage/`. `src/shared/usage.js` beside it is the Hub-core usage model, not that directory's index: `require('./usage')` resolves the file, so never add a `usage/index.js`.
+
 The "Deploy to Cloudflare" button isolates `worker/` into a fresh repo, so the Worker cannot import above its own directory. Its shared closure is `WORKER_SHARED_MODULES` in `scripts/hub-build-manifest.js`; `npm run sync:worker` vendors it into `worker/src/shared/`, mirroring each module's directory so relative requires resolve in both trees. The copies are `@generated` and CI fails on drift: edit `src/shared/`, then sync. Modules in the closure cannot use Node built-ins.
 
 ## Generated and registered state
@@ -26,7 +28,7 @@ Only the app, agent and packaging scripts run `ensure:tokscale`, which installs 
 
 ## Collector pipeline
 
-`src/shared/collector.js` owns every tokscale scan and the binary resolution behind it; self-sync spawns take its resolver rather than repeating it.
+`src/shared/collector.js` owns every tokscale scan and the binary resolution behind it; self-sync spawns take its resolver rather than repeating it. `src/shared/clientSources.js` resolves host source roots (including exact-file watch parents and Copilot's canonical exporter path); `src/shared/clientSourceObservations.js` probes those roots and projects them into source checks and diagnostics, while the collector owns watch policy and derives status from the same checks. Keep the exporter root, ignore policy and attribution on the same canonical path helper, or a symlink/Windows short path can make the watch and its attribution disagree.
 
 - **Serial full scans, exact watch deltas.** Full ticks run today / month / allTime serially, because concurrent scans triple peak CPU/IO. Watch ticks scan `--today` only and derive month/allTime through `applyPeriodDelta()` anchored to the last full scan. The delta is an identity for append-only logs, not an estimate; a stale-date anchor forces a full scan.
 - **Workspace grouping with a per-binary fallback.** The vendored fork's `client,workspace,session,model` grouping returns session and workspace metadata, folded in by `applyTokscaleSessionMetadata()`. A binary that rejects it falls back to `client,session,model`, cached per binary identity. Local metadata resolvers stay enabled either way and skip per session, not per tick, because one scan attributes some clients and not others.
@@ -55,27 +57,43 @@ On Windows, `src/shared/wslUsage.js` also scans **running** WSL distros. It gate
 
 A failed usage reconfiguration rolls back to the last-known-good runtime and retries the latest desired settings on a bounded backoff, emitting `usage-reconfigure-exhausted` when the budget runs out. A newer setting starts a fresh budget.
 
+### Usage worker
+
+The widget runs the collector, the usage transform (`src/shared/usage/usageTransform.js`) and the session archive writer on a worker thread through `src/shared/usage/usageHost.js`, so a tick's post-scan work and a full scan's transcript reads do not stall the main process. Summaries arrive already transformed (`onUpdate(summary, reason, { transformed: true })`) and `DeviceRuntime` skips its own transform for them.
+
+- One worker at a time: a replacement starts only after the previous worker has exited, so two collectors never overlap their scans, watcher descriptor sets or archive writes. Clearing the archive stops the runtime and waits for the same exit.
+- The worker is handed the transform's settings as data, `USAGE_TRANSFORM_SETTING_KEYS`, and `applySettingsPatch()` sends it the new values as soon as they are saved, ahead of the reconfigure settle delay. `settings:update` resolves only once the worker confirms them, so once pausing the session archive reports done, nothing more is captured, as in-process. A setting the transform starts reading has to be added to that list, or the worker transforms without it.
+- A worker that fails emits `usage-worker-failed` and falls back to the in-process collector, and later runtimes stay in-process for the rest of the process. `TOKEN_MONITOR_USAGE_WORKER=0` pins the in-process collector from the start.
+- Quit stays synchronous and does not wait for the worker, which may never get to handle its stop. Every subprocess registered through `createSubprocessTermination()` on the worker is listed in a table shared with the main thread while it runs, and `stopAll()` sends those the `SIGTERM` the in-process `stop()` would have sent. A subprocess spawned on the worker any other way would outlive a quit.
+
 ## Limits collector
 
-`src/shared/deviceRuntime.js` runs usage and limits independently: `UsageRuntime` owns the tokscale collector, `LimitsRuntime` owns refresh timing, bounded concurrency, per-provider latest-wins lanes, deadlines, retry/backoff and `lastGood`/`lastAttempt` retention. A credential change refreshes only its limits lane and never restarts usage, unless a provider note says otherwise (Cursor forces one targeted usage sync).
+`src/shared/usage/deviceRuntime.js` runs usage and limits independently: `UsageRuntime` owns the tokscale collector, `LimitsRuntime` owns refresh timing, bounded concurrency, per-provider latest-wins lanes, deadlines, retry/backoff and `lastGood`/`lastAttempt` retention. A credential change refreshes only its limits lane and never restarts usage, unless a provider note says otherwise (Cursor forces one targeted usage sync).
 
 - `limitsRefreshMode` (`fixed`/`adaptive`) is separate from `limitsRefreshMs`, so fixed intervals keep their meaning and nothing doing arithmetic on the interval handles a sentinel. The adaptive control law is in `limits/burnRate.js`; why `burn-rate` bypasses no cooldown and why local token usage never triggers a refresh is commented in `limits/runtime.js`.
-- Dispatch starts in `src/shared/limits/collector.js`; normalization lives in `src/shared/limits/core.js`. There is no `limits/index.js` because the Worker imports `core.js` as ESM, which does not resolve directories. `limitProviders.js` and `limitBalanceDisplay.js` stay top-level because the renderer loads them by `<script src>`.
+- Dispatch starts in `src/shared/limits/collector.js`; its fetchers come from the static registry in `limits/registry.js`. Each provider's require-free `account.js` declares credential and account metadata; `src/electron/limits/accountSettings.js` binds main-process normalization and renderer redaction without introducing a dependency from `credentialStore.js` back into provider probes. The renderer receives only a serializable form DTO; raw credentials stay in main. A form's credential saves through `limits:saveCredential`, which admits only registry entries that declare a form, probes the draft with the injected transport and no collector write-backs (`credentialProbeDeps()`), never persists a draft that is incomplete, fails normalization, or that the provider called `unauthorized`, stores a session the probe renewed in place of the pasted one, and persists everything else through the same `settings:update` body (`applySettingsPatch`) so it is reconfigured and invalidated like any other settings write. A per-provider revision drops a probe that a later write for the same form overtook. Normalization of quota results lives in `src/shared/limits/core.js`. There is no `limits/index.js` because the Worker imports `core.js` as ESM, which does not resolve directories. `limits/providers.js` and `limits/balanceDisplay.js` sit beside it; the renderer loads them by `<script src>` and Node consumers `require` them.
 
 ### Outbound transport
 
-`src/electron/limitsFetch.js` chooses the transport at the runtime boundary: `src/shared/outboundFetch.js` when a proxy env is set, Electron's `net.fetch` otherwise, so the OS proxy applies without setup. The collector and the account-settings probes both take it.
+`src/electron/limits/fetch.js` chooses the transport at the runtime boundary: `src/shared/outboundFetch.js` when a proxy env is set, Electron's `net.fetch` otherwise, so the OS proxy applies without setup. The collector and the account-settings probes both take it.
 
 - `probeLimitProvider` injects a resolved `fetch` and `createOutboundFetch` returns an injected one untouched, so a provider's own env-proxy call is dead unless its lane builds its own deps. A probe with its own transport (`node:https`, `claudeWebFetch`, a spawned CLI) inherits none of this and its note must say so.
 - Chromium is not undici: never send a `Host` header (the request is rejected), keep `credentials: 'omit'` so the session cookie jar cannot shadow a provider-managed `Cookie`, and expect a cross-origin `Referer` with a path to be cancelled unless the provider sets a looser `referrerPolicy`.
 
 ### Balance quotas
 
-`windows[].metric === 'credits'` marks a money quota (`remaining` + `currency`). `src/shared/limitBalanceDisplay.js` is the single display entry point for Home, the tray and the limits page: key off the marker, never a provider whitelist. The top-up meter percentage is a display derivation and stays out of the wire shape.
+`windows[].metric === 'credits'` marks a money quota (`remaining` + `currency`). `src/shared/limits/balanceDisplay.js` is the single display entry point for Home, the tray and the limits page: key off the marker, never a provider whitelist. The top-up meter percentage is a display derivation and stays out of the wire shape.
 
 ## Widget mode switching
 
 `settings.hubMode` selects the data path. `local` runs the local collector over IPC. `client` stops it, opens the Hub SSE stream and runs a sync collector for this device. `host` adds an embedded Hub (`startEmbeddedHub()`). A widget sync collector skips posting while the PID in `data/agent.pid` is alive — the only coordination between widget and headless agent.
+
+Every publish recomposes and ships the whole stats tree, so its cost is paid per event (`src/electron/statsPublisher.js`):
+
+- **Client mode batches publications.** Local ticks and Hub events, including the Hub's echo of this device's own upload, collapse into one publish per 1 s window that composes whatever is newest when it closes. A Hub reason outranks a local one in the batch, because the renderer reads `local` as saying nothing about the connection. `sendStatus()` flushes the batch first: a Hub event delivered after a disconnect status would mark the stream connected again.
+- **Published snapshots are immutable.** `electronPresentationStats()` caches its projection per snapshot object and settings key, and `composeLocalSyncStats()` caches the local record's normalization per record object. Mutating either in place serves a stale projection; replace the object instead.
+- **All-time session detail is composed on request.** It is most of a recompose (this machine's full list; the Hub strips it from uploads) and nothing reads it per publish, so `composeLocalSyncSummary()` (Client mode) and `composeLocalOnlySummary()` (Local mode) leave it out and `completeLocalSyncStats()` composes that same snapshot in full when the exporter or the renderer asks. A summary empties the local record's all-time session list before normalizing it, not after, because those sessions are most of the normalization. A new per-publish reader of `periods.allTime.sessions` would read an empty map: complete the snapshot instead.
+- **The renderer gets a slimmer copy.** Every stats payload crossing IPC goes through `rendererStats()`: device records lose their sessions and projects, and `periods.allTime` loses its session list in every mode. The renderer pulls that list through `stats:allTimeSessions` while a view that shows it is open, and keeps the last one attached to newer stats until the next pull lands (`renderer/allTimeSessions.js`). A pull names the snapshot it completes: `createRendererSnapshots()` stamps every copy with an id and its `hubModeGeneration`, and the Hub snapshot's local record is captured where the snapshot is built. Completing from `latestStats` or the live `lastCollectedDevice` would pair newer rows with older totals (a `stats:get` read never becomes `latestStats`), and a list never crosses a generation, so one Hub's sessions are never shown under another's totals. A renderer feature that needs per-device or all-time sessions must ask for them, not widen this copy.
 
 ## Settings and credentials
 
@@ -83,7 +101,7 @@ A failed usage reconfiguration rolls back to the last-known-good runtime and ret
 - **Precedence** for agent and standalone Hub options with a CLI flag is `CLI flag → env (real or .env) → built-in default`; env-only settings have no CLI layer. There is no JSON config file.
 - **Widget storage** splits by sensitivity: `userData/settings.json` holds preferences and account metadata, `userData/credentials.json` holds raw GUI-managed credentials. The credential store is deliberately plaintext with POSIX `0600` (Windows relies on the `userData` ACL) rather than Keychain, to avoid OS prompts; it does not protect against processes running as the same user. The agent and standalone Hub never read it.
 - **Renderer redaction** is default-deny: raw credentials reach the renderer only through an explicit allowlist (currently the two Hub secrets the sync UI needs).
-- **New credentials** go in `CREDENTIAL_SETTING_PATHS` (`src/shared/credentialStore.js`), or a nested path in the same store for dynamic accounts — never a provider-specific store.
+- **New credentials** are declared as a field `storePath` in the provider's `src/shared/providers/<id>/account.js`; `CREDENTIAL_SETTING_PATHS` derives from those declarations, so a literal entry added to `credentialStore.js` would bypass the refresh-scope keys and renderer projection. Dynamic accounts use a nested path in the same store — never a provider-specific store.
 - **Migration** writes and verifies the new store before stripping the old source. Corrupt, unknown-version or symlinked stores are never replaced with an empty document.
 
 ## Data flow contract
